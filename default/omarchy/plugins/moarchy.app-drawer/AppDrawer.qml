@@ -1572,21 +1572,22 @@ Item {
     // failure, arriving from the fix for a different one.
     margins.bottom: root.keyboardUp ? 0 : -root.gestureStrip
 
-    // Plain Exclusive rather than the prime-then-OnDemand dance in
-    // Ui/KeyboardPanel.qml: that exists so clicks can still reach the bar
-    // underneath, and this app drawer deliberately owns the whole screen while it
-    // is up. Every other full-screen overlay in the shell -- menu, emojis,
-    // clipboard, image picker -- does exactly this.
+    // OnDemand, NOT Exclusive. This surface owns the whole screen while it is up
+    // (its mask is null when open, so the input region is the entire output), and
+    // an Exclusive-keyboard-focus layer surface makes Hyprland route ALL touch to
+    // it -- including taps meant for the on-screen keyboard, which sits on a
+    // higher layer. The symptom: with Exclusive the OSK received no touch at all
+    // while the drawer was open (not even a key highlight), so the search field
+    // could never be typed into (docs/fp4-defects.md D27 -- confirmed by protocol
+    // trace and on the handset). OnDemand takes keyboard focus when the surface is
+    // tapped -- enough to focus the search field -- without grabbing pointer/touch
+    // away from the OSK.
     //
-    // Gated on `progress`, NOT on `opened`. `opened` goes false on the first
-    // frame of the close drag, which drops keyboard_interactivity to None
-    // mid-gesture; sway then hands focus back to a window, and that focus
-    // change cancels the touch this surface is holding. The symptom was a
-    // close drag that died after one frame -- and only when a window was open
-    // for focus to return to, which is why it passed by hand on an empty
-    // workspace and failed every time under the selftest. Holding Exclusive
-    // until the sheet is all the way down keeps the gesture intact.
-    WlrLayershell.keyboardFocus: root.progress > 0 ? WlrKeyboardFocus.Exclusive
+    // Still gated on `progress`, NOT on `opened`: `opened` goes false on the first
+    // frame of the close drag, which would drop keyboard_interactivity mid-gesture;
+    // holding it until the sheet is all the way down keeps the close-drag intact
+    // (verified working under OnDemand on the FP4).
+    WlrLayershell.keyboardFocus: root.progress > 0 ? WlrKeyboardFocus.OnDemand
                                                    : WlrKeyboardFocus.None
 
     // The scrim is what makes a half-open app drawer read as half-open rather than
@@ -1817,16 +1818,14 @@ Item {
           // is 0 wide and `clearButton.left` is the pill's right edge, so the
           // field is back to filling the pill and F1 still holds: every pixel
           // of the drawn pill focuses it.
-          // A plain TextInput, NOT the shell's Ui.TextField (a QtQuick Controls
-          // widget). moarchy-keyboard binds zwp_input_method_v2 and Qt drives
-          // text-input-v3 only for a real TextInput/TextField that holds focus;
-          // the Controls TextField does not participate, so the OSK typed
-          // nowhere in this field (fp4-defects.md D27). moarchy already migrated
-          // its own fields to a plain TextInput (default/omarchy/qs_ui/TextField.qml,
-          // whose header records exactly this) -- the app drawer was the one
-          // field that got missed. Swapping to TextInput is the fix; the earlier
-          // forceActiveFocus attempt failed because focus was never the problem,
-          // the widget was.
+          // A plain TextInput. NB the field type was NOT the D27 cause: qs.Ui's
+          // TextField is already a plain TextInput, and swapping to this inline
+          // one changed nothing on its own -- the OSK still typed nowhere. The
+          // real cause was this window holding Exclusive keyboard focus, which
+          // made Hyprland grab ALL touch (the OSK never saw a tap); the fix is
+          // OnDemand keyboardFocus above (fp4-defects.md D27). A plain TextInput
+          // is kept because it is the right control for text-input-v3 (matches
+          // the shell's other fields), not because it fixed anything here.
           TextInput {
             id: searchField
             anchors.left: parent.left

@@ -841,29 +841,36 @@ Until then, avoid the Docker app on the handset.
 
 ## D27 — the on-screen keyboard does not work in the app drawer search {#d27}
 
-**Status: ROOT CAUSE FOUND + FIX APPLIED 2026-09-26, pending a live keystroke
-test.** The drawer's search field used the shell's `qs.Ui.TextField` -- a QtQuick
-**Controls** widget -- while `moarchy-keyboard` drives input over
-`zwp_input_method_v2` and Qt speaks `text-input-v3` only for a real
-`TextInput`/`TextField` that holds focus. The Controls widget does not
-participate in that path, so keys went nowhere. moarchy had already hit and
-solved this: `default/omarchy/qs_ui/TextField.qml` was migrated to a plain
-`TextInput` for exactly this reason (its header records it), and moarchy's own
-fields (Wi-Fi passphrase, Mail sign-in) type fine -- **the app drawer was the one
-field missed.** That also explains why the earlier `forceActiveFocus()` attempt
-did nothing: focus was never the problem, the widget was. Fix: the drawer's
-search control is now a plain `TextInput` (color/placeholder from the drawer's
-own tokens), moarchy pkgrel 10. **Live test needs a full shell restart, not a
-hot reload:** the app-drawer is a first-party plugin loaded at shell startup, and
-the shell's `rescanPlugins` IPC only reloads third-party/local plugins --
-verified 2026-09-26 by deploying the fix and calling `rescanPlugins`, after which
-the drawer still ran the old code (a visible placeholder marker did not change).
-So it cannot be confirmed by a live reload; it loads on the next quickshell
-restart / reboot. The fix is deployed to the handset and committed; confirm at
-the next reboot -- open the drawer, tap search, type: characters should appear
-and the grid filter, placeholder and clear button still working. If it still does
-not type after a real restart, the residual suspect is the drawer's `Exclusive`
-keyboardFocus / focusSink stealing active focus from the TextInput.
+**Status: FIXED 2026-09-27, confirmed on the handset.** Real root cause: the app
+drawer is the shell's ONLY text field on a **layer surface** (a `PanelWindow`);
+every field that works -- Wi-Fi passphrase, Mail, Files, Contacts -- is a regular
+`AppWindow`. When open, the drawer holds `WlrKeyboardFocus.Exclusive` AND its
+input region is the whole screen (`mask` is null), and an Exclusive-keyboard-focus
+layer surface makes Hyprland route **all touch** to it. So the on-screen keyboard,
+though it sits on a higher layer, received **no `wl_touch` at all** while the
+drawer was open -- no key even highlighted, and the omarchy/symbol keys were dead
+too. Keys went nowhere because the OSK never saw the taps, not because of any
+text-input focus problem.
+
+The earlier 2026-09-26 diagnosis (kept below) was **wrong**: it blamed the field
+being a Controls widget and swapped it for a plain `TextInput`. But
+`qs.Ui.TextField` was already a plain `TextInput`, so that changed nothing --
+proven by a `WAYLAND_DEBUG` trace of `moarchy-keyboard` (the OSK got zero
+`wl_touch` while the drawer was open) and by the user's observation that keys
+highlight in apps but are completely dead in the drawer. That reframed it from
+"focus routing" to "touch never arrives."
+
+**Fix:** the drawer's `keyboardFocus` (AppDrawer.qml) is now `OnDemand` instead of
+`Exclusive`. OnDemand takes keyboard focus on tap -- enough to focus the search
+field -- without grabbing pointer/touch away from the OSK. Verified on the FP4
+2026-09-27: the OSK types into the search and the grid filters. The
+close-drag-to-dismiss (the reason `Exclusive` was originally chosen) **still works
+under OnDemand** -- verified open -> drag-down -> closed. moarchy pkgrel bumped.
+
+Minor remaining nit (by design): raising the OSK via the bottom keyboard *icon*
+does not focus the search field (that icon is a generic OSK-raise); tapping the
+search field directly both focuses it and raises the OSK, which is the intended
+gesture.
 
 The original open-investigation notes are kept below for the record.
 

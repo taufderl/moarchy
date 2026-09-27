@@ -231,7 +231,15 @@ pkgver=$_ver
 #    had no logind seat, and polkit denies suspend (auth_admin) to a seatless
 #    session -- the boot/in-session swayidle (launched via hl.exec_cmd on seat0)
 #    is authorized (pkcheck rc=0) and suspends fine. Not a code bug in note 9.
-pkgrel=13
+# 14: the app-drawer keyboard actually types now (D27, for real this time). The
+#    note-10 fix (swap to a plain TextInput) was wrong -- the field type was never
+#    the cause. The drawer is the shell's only text field on a layer surface, and
+#    when open it held Exclusive keyboard focus with a whole-screen input region,
+#    so Hyprland routed ALL touch to it and the OSK received none (proven by a
+#    wl_touch trace). Changed the drawer's keyboardFocus from Exclusive to
+#    OnDemand (AppDrawer.qml): the OSK gets touch again, the field still focuses on
+#    tap, and the close-drag still works. Verified typing on the FP4.
+pkgrel=14
 pkgdesc="Omarchy's look, keybindings and theming on a phone, under Hyprland"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
