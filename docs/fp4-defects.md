@@ -227,7 +227,25 @@ qmicli, unless MM's location is disabled first.
 
 ## D10 — the LPI pinctrl loses a boot race and takes all audio with it {#d10}
 
-**Status: OPEN.** Seen once on 2026-09-23, cleared by a reboot.
+**Status: FIX PREPARED 2026-09-26, pending a reboot test.** Root cause pinned:
+the LPASS pinctrl (`33c0000.pinctrl`) can only probe once the ADSP has
+registered its clock services (~16.5 s+), and on a slow boot that slips past the
+kernel's deferred-probe window -- `CONFIG_DRIVER_DEFERRED_PROBE_TIMEOUT=10`
+(config:1662), 10 s. When it does, deferred probe gives up, the pinctrl and every
+consumer (both macros, both SoundWire controllers, the sound card) never probe,
+and audio is silently gone for the boot, not retried. Raising the window is the
+correct lever -- deferred probe already waits for the ADSP; it is just cut off
+early, and a longer window costs nothing on a normal boot (it only delays a
+genuinely unprobeable device).
+
+**Fix:** `deferred_probe_timeout=60` added to the kernel cmdline in
+`image/boot/android-bootimg.sh` (boot.img only, no kernel recompile; shared with
+sargo, harmless there). If ABL turns out to strip the param (only `console=` is
+known-stripped), the fallback is bumping `CONFIG_DRIVER_DEFERRED_PROBE_TIMEOUT`
+and rebuilding the kernel. **Reboot test** (~10-15 cold boots, the race is
+~1-in-8): confirm `/proc/cmdline` carries the param, `/proc/asound/cards` is
+non-empty every boot, and `33c0000.pinctrl`/`sound` never appear in
+`/sys/kernel/debug/devices_deferred`.
 
 The phone came up with **no sound card at all** — `/proc/asound/cards` said
 `--- no soundcards ---` — although all three DSPs were running and all sixteen
@@ -358,6 +376,43 @@ processor was not crashing into a debug image. Catching the trigger needs an
 EDL event with early-boot instrumentation, which a random fault makes hard.
 Left open, and cheap to live with now that recovery needs no physical access.
 
+### Instrumentation to diagnose it (prepared 2026-09-26, not yet applied)
+
+The reason the cause stays unidentified is that **nothing captures the moment**:
+`/sys/fs/pstore/` is empty because the RAM backend is off. In the vendored kernel
+config (`pkgbuilds/linux-moarchy-sm6350/config`) `CONFIG_PSTORE=y` but
+`CONFIG_PSTORE_RAM`, `_CONSOLE` and `_PMSG` are all **not set**, and neither the
+mainline `sm7225-fairphone-fp4.dts` nor `sm6350.dtsi` reserves a ramoops region.
+Enabling ramoops would let the *next* EDL episode leave the previous boot's
+console/panic tail in `/sys/fs/pstore/`.
+
+Two ready ways to enable it (both need a kernel rebuild):
+
+1. **Config + DT node (cleaner):** set `CONFIG_PSTORE_RAM=y`, `_CONSOLE=y`,
+   `_PMSG=y` (this `select`s `REED_SOLOMON*` via olddefconfig -- re-vendor the
+   resolved config to keep `prepare()`'s diff clean), and add a `ramoops@b0000000`
+   reserved-memory node (1 MiB, verified free -- between `dfps_data` end
+   `0xa2400000` and `removed_region 0xc0000000`) to the fp4 dts.
+2. **Config + cmdline (no DT, fits the no-kernel-patch stance):** the same config
+   change, plus `memmap=0x100000$0xb0000000 ramoops.mem_address=0xb0000000
+   ramoops.mem_size=0x100000 ramoops.console_size=0x40000 ramoops.pmsg_size=0x40000
+   ramoops.record_size=0x20000` on the cmdline (image/boot/android-bootimg.sh).
+
+**Why it is documented and not applied:** the config change requires a kernel
+rebuild this environment can't verify (a bad config fails the build), the DT node
+hits the same kernel-delivery wall as D23 (the kernel package is upstream-tag +
+config-only, no patch step), and the cmdline variant shares D10's unverified
+ABL-passthrough risk. So this is teed up for a build + verify, gated on the
+kernel-delivery decision below.
+
+**Honest limit of ramoops here:** it captures the *kernel* side -- a panic/oops
+or the previous boot's console tail. It will catch an EDL that follows a kernel
+crash or dirty shutdown. But "plain EDL, never a ramdump" points at the
+bootloader (XBL/ABL) choosing EDL *before* the kernel, which ramoops cannot see;
+a full diagnosis may also need the **PMIC PON/POFF warm-boot-reason register**
+surfaced (a separate, complementary lead). Ship ramoops as the cheap first
+instrument and read `/sys/fs/pstore/` after the next episode.
+
 ### Recovering without touching the phone
 
 ### Recovering without touching the phone
@@ -408,7 +463,23 @@ to make the unit pass the slot explicitly.
 
 ## D12 — Hyprland draws a "started without start-hyprland" banner {#d12}
 
-**Status: OPEN**, cosmetic, and not device-specific.
+**Status: FIXED 2026-09-26 (config option), pending a visual confirm.** Hyprland
+0.56 exposes `misc:disable_watchdog_warning` -- named for the watchdog fd
+start-hyprland passes, but its own description is literally "whether to disable
+the warning about not using start-hyprland" (confirmed via `hyprctl
+descriptions`). Set it in `config/hypr/input.lua` (moarchy pkgrel 12). This turns
+the banner off **without** adopting start-hyprland, which the note below rightly
+flags as risky: it is a 264 KB binary that manages an instance and does more than
+exec, so swapping it into `zz-moarchy.sh` unexamined could boot the phone to no
+UI. The session still execs `Hyprland -c ...` as before; only the nag is
+silenced. **Confirm:** the red banner across the top is gone once the updated
+`input.lua` is deployed and Hyprland reloads (a `hyprctl reload`, or the package
+deploy). `hyprctl keyword` cannot set it live here -- under the `.lua` config the
+legacy keyword parser is refused (same reason moarchy-screen uses `hl.*` eval),
+and there is no `hl.keyword` in this API, so it lands via the config, not a
+runtime poke.
+
+**Status (historical): OPEN**, cosmetic, and not device-specific.
 
 A red-underlined banner sits across the top of the screen:
 
@@ -535,7 +606,27 @@ about, and because "no driver exists" is a different answer from "misconfigured"
 
 ## D21 — Bluetooth carries music but not call audio {#d21}
 
-**Status: OPEN**, and narrowed on 2026-09-24: not a missing package, an
+**Status: OPEN, re-tiered to a large (Tier-4-sized) task 2026-09-26.** Deeper
+research found the gap is more fundamental than "unbridged in WirePlumber": it is
+**missing at the kernel/AFE level**. On this phone call audio is DSP-internal --
+`q6voiced` holds `VoiceMMode1` open and the DSP routes the voice session straight
+to the same hardware backends as media (`QUIN_MI2S_RX` out, `TX_CODEC_DMA_TX_3`
+in); the voice audio **never crosses an AP-accessible PCM**. And there is **no
+Bluetooth audio backend at all**: the kernel has `# CONFIG_SND_SOC_BT_SCO is not
+set`, no BT/AUX-PCM/SCO DAI in the sound card, and no HFP-AG↔modem bridge. So the
+DSP has no BT AFE port to route a call to, and userspace has no PCM to loop back.
+Two possible architectures, both sizeable: **(A)** add a BT-SCO/AUX-PCM AFE
+backend (kernel config + DT DAI + DSP SCO support) + a UCM "Voice Call BT" verb;
+or **(B)** a software loopback -- a q6routing voice↔MultiMedia path exposing the
+call on host PCMs, bridged to PipeWire's native HFP-AG SCO nodes -- whose
+feasibility hinges on whether those voice↔MultiMedia mixers exist on this card.
+Either way it is kernel/integration work plus a live paired-headset call to
+develop, which only the owner can drive; no repo change fixes it now. Next
+code-free steps when the phone is up + a headset paired:
+`amixer -c0 controls | grep -iE 'voice|mmode'` (does path B exist?) and, during a
+call with the headset connected, `wpctl status`/`pw-dump` for HFP SCO nodes.
+
+**Status (historical): OPEN**, and narrowed on 2026-09-24: not a missing package, an
 unbridged path. Full confirmation needs a paired headset and a call.
 
 A2DP (music) works. What the wiki records as "HFP/HSP don't work at all" is the
@@ -584,6 +675,17 @@ path and not at the HX83112A.
 Worth watching rather than chasing: it has not yet been tied to anything a user
 would notice.
 
+**Likely fix (kernel-delivery-blocked, low priority), scoped 2026-09-26.** The
+failures are at the GPI DMA layer under the `988000.i2c` (GENI) controller, not
+in the HX83112A. The standard workaround for flaky GENI/GPI-DMA i2c on Qualcomm
+is to take that bus **off DMA into FIFO/PIO mode** -- for a low-bandwidth
+touchscreen the CPU cost is negligible and it removes the GPI DMA failure path
+entirely. That is a DT change on the `&i2c` node for the touch controller
+(drop/adjust its `dmas`, or a `qcom,...` FIFO quirk), so it hits the same
+kernel-delivery wall as D11/D23 (the kernel package is upstream-tag, config-only,
+no patch step). Cosmetic and not user-visible beyond a rare dropped touch, so it
+stays low priority behind the kernel-delivery decision.
+
 ---
 
 ## D23 — the camera's CSI PHY supplies are undescribed, and a clock sticks on {#d23}
@@ -622,15 +724,51 @@ So, authoritatively:
   = pm6350 in mainline terms), plus the `cam_cc_titan_top_gdsc` GDSC and the
   SoC `refgen`, which mainline already handles.
 
-The mainline fix is now a concrete, non-guess DTS patch on `&camss`: point
-`vdd-csiphy{0..3}-0p9-supply` at the mainline pm6350 L18 node and
-`vdd-csiphy{0..3}-1p25-supply` at L22. This is correctness/power-management
-polish — the camera works today on the dummy regulators — but it is no longer
-blocked. It needs a kernel rebuild + reflash, so it is teed up, not applied
-blind. (What the vendor DTS does **not** give, and what would actually improve
-image *quality*, is the Qualcomm ISP tuning — chromatix/CAMX black-level, lens
-shading, colour matrices — which lives in the gated `camera-devicetree` +
-proprietary blobs, not in this open board tree.)
+**The exact patch, confirmed against the mainline kernel 2026-09-26.** The
+mainline tree is `v7.2.0-sm6350` (`sm6350-mainline/linux`). Its camss driver
+(`csiphy_res_sm6350[]`) requests eight per-PHY supplies
+(`vdd-csiphy{0..3}-{0p9,1p25}`, each `init_load_uA = 80000`), but the FP4
+`&camss` override in `arch/arm64/boot/dts/qcom/sm7225-fairphone-fp4.dts` sets
+only `vdda-0.9-supply` / `vdda-1.25-supply` -- **names the sm6350 camss code
+never reads** (grepped the whole `camss/` dir). So those two lines are dead and
+all eight supplies fall to dummy regulators. The mainline regulator labels are
+confirmed in the same dts: `vreg_l18a` (0.788-1.049 V, the 0.9 V rail) and
+`vreg_l22a` (1.08-1.305 V, the 1.25 V rail), both already powering other
+consumers, so enabling them from camss is harmless. The patch:
+
+```diff
+ &camss {
+-	vdda-0.9-supply = <&vreg_l18a>;
+-	vdda-1.25-supply = <&vreg_l22a>;
++	vdd-csiphy0-0p9-supply = <&vreg_l18a>;
++	vdd-csiphy0-1p25-supply = <&vreg_l22a>;
++	vdd-csiphy1-0p9-supply = <&vreg_l18a>;
++	vdd-csiphy1-1p25-supply = <&vreg_l22a>;
++	vdd-csiphy2-0p9-supply = <&vreg_l18a>;
++	vdd-csiphy2-1p25-supply = <&vreg_l22a>;
++	vdd-csiphy3-0p9-supply = <&vreg_l18a>;
++	vdd-csiphy3-1p25-supply = <&vreg_l22a>;
+ 	status = "okay";
+```
+
+**Delivery is the blocker, not the diff** (see the note in D11 and below): this is
+a kernel-tree change, and `pkgbuilds/linux-moarchy-sm6350` builds the pinned
+upstream tag **config-only, with no patch step** by design. So this patch needs a
+decided delivery path -- a patch step in the kernel PKGBUILD, or a moarchy kernel
+branch the manifest's `kernel-ref` points at -- the same path the existing
+kernel DT work (aw88264/mic/NFC) needs. Correctness/power polish; the camera
+works today on the dummies, so it is not urgent. (What the vendor DTS does
+**not** give, and what would actually improve image *quality*, is the Qualcomm
+ISP tuning -- chromatix/CAMX black-level, lens shading, colour matrices -- which
+lives in the gated `camera-devicetree` + proprietary blobs.)
+
+**Autofocus (the main sensor's real limiter), scoped, not attempted:** the main
+imx582 has a VCM actuator but no focus control because mainline `qcom-camss`
+does not drive actuators and no V4L2 lens subdev binds. Unlocking it needs (a)
+identifying the VCM chip (the vendor `qcom,actuator` node names none -- an
+I2C/CCI probe or the schematic; likely dw9714/dw9807/ak7375), (b) a mainline
+V4L2 VCM driver bound over CCI in the dts, and (c) libcamera `CameraLens` +
+megapixels AF support. A multi-component upstream/libcamera effort, not a patch.
 
 **The stuck AXI clock.** Tearing a capture stream down warns every time:
 
@@ -648,7 +786,25 @@ it is not fixed by anything in this tree.
 
 ## D25 — the Docker TUI soft-locks: raw pkexec in a terminal {#d25}
 
-**Status: OPEN**, lower priority since the app store -- the case that mattered --
+**Status: FIX APPLIED 2026-09-26 (polkit rule), UNVERIFIED.** A scoped polkit
+rule (`default/polkit/50-moarchy-docker.rules`, moarchy pkgrel 11) auto-authorizes
+the Docker app's `pkexec` for `wheel`, so no unanswerable password screen appears
+-- the same locked-password cause and the same fix shape as the app store
+([D26](./fp4-fixes.md#d26)); it is no wider than the `NOPASSWD` sudo the user
+already holds. **Unverified** because `lazydocker` is not installed on the test
+handset, so the exact `command_line` the rule matches could not be confirmed; if
+the wrapper's command lacks the `lazydocker` token the rule silently won't fire
+(the D26 failure mode). The broader alternative -- grant
+`org.freedesktop.policykit.exec` for `wheel` unconditionally -- fixes the whole
+class of terminal-pkexec soft-lock on this un-answerable device and is still
+bounded by that sudo; it's a security-posture call left to the owner.
+
+**Correction to the note below:** a graphical polkit agent IS present
+(`config/hypr/autostart.lua` starts `polkit-gnome-authentication-agent-1`); the
+real trap is not a missing agent but that the dialog it raises cannot be answered
+(locked password, no OSK for it) and the Docker terminal blocks there.
+
+**Status (historical): OPEN**, lower priority since the app store -- the case that mattered --
 is fixed separately ([D26](./fp4-fixes.md#d26)). Reproduced 2026-09-24,
 recovered over SSH.
 
@@ -685,7 +841,33 @@ Until then, avoid the Docker app on the handset.
 
 ## D27 — the on-screen keyboard does not work in the app drawer search {#d27}
 
-**Status: OPEN**, reported 2026-09-24. Under investigation; the exact symptom
+**Status: ROOT CAUSE FOUND + FIX APPLIED 2026-09-26, pending a live keystroke
+test.** The drawer's search field used the shell's `qs.Ui.TextField` -- a QtQuick
+**Controls** widget -- while `moarchy-keyboard` drives input over
+`zwp_input_method_v2` and Qt speaks `text-input-v3` only for a real
+`TextInput`/`TextField` that holds focus. The Controls widget does not
+participate in that path, so keys went nowhere. moarchy had already hit and
+solved this: `default/omarchy/qs_ui/TextField.qml` was migrated to a plain
+`TextInput` for exactly this reason (its header records it), and moarchy's own
+fields (Wi-Fi passphrase, Mail sign-in) type fine -- **the app drawer was the one
+field missed.** That also explains why the earlier `forceActiveFocus()` attempt
+did nothing: focus was never the problem, the widget was. Fix: the drawer's
+search control is now a plain `TextInput` (color/placeholder from the drawer's
+own tokens), moarchy pkgrel 10. **Live test needs a full shell restart, not a
+hot reload:** the app-drawer is a first-party plugin loaded at shell startup, and
+the shell's `rescanPlugins` IPC only reloads third-party/local plugins --
+verified 2026-09-26 by deploying the fix and calling `rescanPlugins`, after which
+the drawer still ran the old code (a visible placeholder marker did not change).
+So it cannot be confirmed by a live reload; it loads on the next quickshell
+restart / reboot. The fix is deployed to the handset and committed; confirm at
+the next reboot -- open the drawer, tap search, type: characters should appear
+and the grid filter, placeholder and clear button still working. If it still does
+not type after a real restart, the residual suspect is the drawer's `Exclusive`
+keyboardFocus / focusSink stealing active focus from the TextInput.
+
+The original open-investigation notes are kept below for the record.
+
+**Status (historical): OPEN**, reported 2026-09-24. Under investigation; the exact symptom
 (keyboard does not appear vs. appears but does not type) is still to be pinned.
 
 The app drawer is a search field over an app grid, meant to be filtered by
@@ -730,10 +912,17 @@ OSK's key delivery to shell surfaces is broken everywhere. Pending that.
 
 ## D28 — the phone never suspends on idle; it only blanks the screen {#d28}
 
-**Status: OPEN, diagnosed 2026-09-25 (read-only); the enablement is all present,
-two steps remain.** This is Track A1 in [`fp4-roadmap.md`](./fp4-roadmap.md) and
-the reason battery is rated `P`: "screen off" is not "asleep", so the phone
-drains while it looks off.
+**Status: FIXED 2026-09-27, s2idle drain measured (~1 %/h, ~7x better than
+screen-blank); pending only the pkgrel-13 reflash to put the same config on the
+phone.** The idle->suspend wiring
+(steps 1-2) was done 2026-09-26. Two follow-up overnight watches saw zero
+suspends, but the cause was NOT the idle logic -- it was that the swayidle under
+test had been relaunched over ssh and so had no logind seat, and polkit denies
+suspend to a seatless session (see "Root cause" below). The in-session swayidle
+is authorized and suspends. The idle action has also been consolidated into one
+step (moarchy-idle-action). This is Track A1 in
+[`fp4-roadmap.md`](./fp4-roadmap.md) and the reason battery is rated `P`: "screen
+off" is not "asleep", so the phone drains while it looks off.
 
 **What is already there** (checked on the handset, read-only):
 
@@ -763,16 +952,109 @@ idle power. That is the battery finding.
 
 **What remains, in order:**
 
-1. **Prove s2idle resumes cleanly.** `sudo rtcwake -m mem -s 30` on the handset
-   — it arms the RTC to self-wake, so it cannot hang asleep, but a botched
-   resume still needs a power-button press, so it must be run with someone
-   watching the phone (not unattended). Read `dmesg` for a clean
-   "suspend entry (s2idle) -> suspend exit" and any driver resume errors.
-   *(Postponed until the owner is with the phone.)*
-2. **Wire idle -> suspend, once (1) passes.** Extend the idle chain so that some
-   time after the blank (and the lock) the system enters s2idle — e.g. a second
-   swayidle timeout running `systemctl suspend`, waking on power button / call /
-   alarm. This must NOT be enabled before (1): an idle timeout that suspends into
-   a broken resume would strand the phone (cf. D1/D3, the same class of trap).
+1. **Prove s2idle resumes cleanly. DONE 2026-09-26 — it works.** `rtcwake -m mem
+   -s 25` (armed detached via `systemd-run` so it did not depend on the ssh
+   session), with the owner watching. The phone suspended, woke on the RTC
+   alarm, and reconnected on its own; `/sys/power/suspend_stats/success` went
+   0 -> 1, fail 0, and dmesg shows a clean cycle:
+
+   ```
+   PM: suspend entry (s2idle)
+   Filesystems sync: 0.027 seconds
+   Restarting tasks: Starting / Done
+   PM: suspend exit
+   ```
+
+   No failed devices, entry->resume in ~2 s. So s2idle is safe to enable.
+2. **Wire idle -> suspend. DONE 2026-09-26, tested live on the FP4.** A second
+   swayidle timeout (config/hypr/autostart.lua) runs `bin/moarchy-idle-suspend`
+   60 s after the blank, with `before-sleep 'moarchy-lock'` so every suspend path
+   wakes to the PIN pad. moarchy-idle-suspend skips Stay Awake and an active
+   call/audio (sink/source streams, sleep inhibitors). Shipped by moarchy pkgrel 9.
+   Verified on hardware: `moarchy-idle-suspend` suspended to s2idle
+   (`suspend_success` incremented, clean resume), and a **single** power-button
+   press woke it to the PIN pad, which 1337 unlocked.
+
+   **Also fixed a double-press bug found during this test.** Idle-off used to run
+   `moarchy-screen blank`, which blanks WITHOUT setting the lock flag (so touch
+   could wake it). But the power button decides lock-vs-wake off that flag, so the
+   first press after idle read no flag and re-locked (a no-op blank) instead of
+   waking -- you needed two presses, unlike a power-button-off (one). Fix:
+   `moarchy-idle-blank` now runs `moarchy-screen lock`, so idle-off leaves the
+   same state as power-off and a single press wakes. Trade-off: touch no longer
+   wakes from idle (the power button does), which is standard phone behaviour and
+   is what removes the two-handler race. Verified: single press now wakes from
+   idle.
 3. **Measure idle drain** in s2idle vs screen-blank-only, which needs the phone
    unplugged (USB masks `current_now`), same constraint as GPS testing.
+
+**Screen-blank-only drain measured 2026-09-26, unplugged overnight.** With the
+system never suspending (confirmed: `/sys/power/suspend_stats/success` = 0, no
+suspend lines in dmesg over ~46 h uptime), the battery went **99% -> 34%
+overnight** (4.39 V -> 3.72 V). Instantaneous draw ~**0.73 W** (upower), ~8 h to
+empty at 34% -- i.e. roughly **~1 day of standby from full**, screen off, doing
+nothing. That is the cost of D28: a phone that should get days of s2idle standby
+gets about one. The s2idle comparison number still needs step 1 (a proven
+resume) before it can be taken. (Aside: the fuel-gauge/charger status
+misreports here -- `qcom_qg` status reads Unknown and pm7250b-charger reads
+"Charging" while clearly discharging; cosmetic, but it breaks any status-based
+UI.)
+
+
+**Root cause of "zero overnight suspends" (corrected 2026-09-27): a polkit/seat
+problem in the test setup, not the idle logic.** Two overnight watches showed
+`/sys/power/suspend_stats/success` stuck at its starting value across the whole
+night. But the swayidle being watched had, in both cases, been relaunched over
+ssh during earlier live debugging -- and an ssh-launched process has no logind
+seat. logind/polkit grants `org.freedesktop.login1.suspend` to an **active,
+seated** session with no prompt, but requires admin authentication (`auth_admin`)
+for a seatless one, which on this locked-password phone can never be satisfied.
+So swayidle fired its timeout, ran the action, called `systemctl suspend`, and
+was silently denied. The swayidle stderr confirms it:
+
+```
+Call to Suspend failed: Access denied as the requested operation requires
+interactive authentication. However, interactive authentication has not been
+enabled by the calling program.
+```
+
+Proof it is the seat, not the code (checked 2026-09-27 with `pkcheck`):
+
+| caller | logind session | `pkcheck ... login1.suspend` |
+|---|---|---|
+| Hyprland (graphical) | c1, seat0, active | **rc=0 (authorized)** |
+| ssh shell | c197/c208, no seat | rc=2, `auth_admin_keep` (denied) |
+
+So the earlier "timer reset" hypothesis (that a 600 s blank reset swayidle's
+clock so a 660 s suspend timeout never fired) was wrong: swayidle does fire, and
+the graphical session is authorized. **The lesson: idle-suspend cannot be tested
+by relaunching swayidle over ssh.** A hand test must put swayidle in the
+graphical session -- e.g. `hyprctl dispatch 'hl.exec_cmd("swayidle ...")'`, which
+Hyprland runs as its own child on seat0 (`cgroup: session-c1`, `pkcheck rc=0`).
+
+**Code change kept regardless:** the idle action is consolidated into one
+`bin/moarchy-idle-action` (lock, then `moarchy-idle-suspend`) driven by a single
+swayidle timeout, replacing the two-timeout design -- one atomic action, no
+dependence on a second timeout. `config/hypr/autostart.lua`, moarchy pkgrel 13.
+This is a simplification, not a fix for a proven bug in note 9.
+
+**Valid test DONE, s2idle drain measured (2026-09-27, on battery, unplugged).**
+swayidle launched in-session via `hl.exec_cmd` (`cgroup: session-c1`,
+`pkcheck rc=0`), running `timeout 600 moarchy-idle-action ...`; guards all clear.
+It suspended once at ~04:16 (last awake 04:13 @ 62%) and held s2idle until the
+power-button wake at ~09:22 @ 57% -- `suspend_stats/success` 3 -> 4, fail 0.
+
+**Result: 62% -> 57% = 5% over ~5.1 h = ~1 %/h in s2idle**, vs the
+screen-blank-only ~7 %/h (~0.73 W) measured earlier -- about **7x** slower, i.e.
+roughly **4 days** of standby from full instead of ~1. It also re-suspended on
+its own after the morning wake (idle-suspend fires repeatedly, not just once).
+(Caveat: the fuel gauge misreads for a few minutes after resume -- a 57%->49%
+jump in 5 min awake is the qcom_qg `status=Unknown` re-settle, not real drain; the
+across-suspend delta is the reliable figure.) Step 3 is complete; D28 is fixed,
+pending only the same config reaching the phone via the pkgrel-13 reflash.
+
+**Note for the reflash:** the image built overnight (2026-09-27) carries the old
+two-stage config -- the change landed after that build started. Rebuild the image
+(moarchy is now pkgrel 13) before/with tomorrow's reflash. After reflash, the
+valid confirmation is simply: boot, leave the phone idle and unplugged, and watch
+`suspend_success` climb -- do NOT relaunch swayidle over ssh (it would be denied).

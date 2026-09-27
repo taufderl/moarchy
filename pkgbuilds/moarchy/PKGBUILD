@@ -195,7 +195,43 @@ pkgver=$_ver
 #    arms it whenever the panel blanks (idle or power) so the next wake shows
 #    the PIN pad; and default/pam.d/omarchy-lock-{password,fingerprint} give the
 #    lock a PAM stack to authenticate against (it had none, so it never could).
-pkgrel=8
+# 9: idle -> suspend, and idle-off now locks like power-off. bin/moarchy-idle-suspend
+#    and a second swayidle timeout in config/hypr/autostart.lua suspend the phone
+#    60 s after the screen blanks, with before-sleep locking first, so idle sleeps
+#    the system to s2idle instead of draining ~0.73 W behind a dark panel
+#    (fp4-defects D28); skips Stay Awake and an active call/audio. And
+#    moarchy-idle-blank now runs `moarchy-screen lock` (was `blank`) so the idle
+#    timeout sets the lock flag -- a single power press wakes from idle, not two
+#    (the flagless blank made the first press re-lock). Tested live on the FP4:
+#    suspend/resume clean, power-button single-press wake to the PIN pad.
+# 10: the app-drawer search field types again. It used the shell's Controls
+#    Ui.TextField, which does not participate in the zwp_input_method_v2 /
+#    text-input-v3 path moarchy-keyboard drives, so the OSK typed nowhere there
+#    (fp4-defects D27); moarchy had migrated its other fields to a plain
+#    TextInput (qs_ui/TextField.qml) but missed the drawer. Swapped it to a plain
+#    TextInput. Needs a live keystroke test to confirm.
+# 11: default/polkit/50-moarchy-docker.rules auto-authorizes the Docker app's
+#    pkexec (lazydocker) for wheel, so it no longer soft-locks on an unanswerable
+#    password screen (fp4-defects D25) -- same locked-password cause as the store
+#    rule (49), no wider than the NOPASSWD sudo already granted. UNVERIFIED: the
+#    exact pkexec command could not be confirmed (lazydocker not installed on the
+#    test handset), so the command match needs a live check.
+# 12: config/hypr/input.lua sets misc:disable_watchdog_warning so Hyprland 0.56's
+#    red "started without start-hyprland" banner stops overlapping the clock
+#    (fp4-defects D12). Suppresses the banner without adopting the start-hyprland
+#    binary (which manages an instance and risks booting to no UI).
+# 13: idle-suspend consolidated into one action. The note-9 design used two
+#    swayidle timeouts (blank at 600 s, suspend at 660 s); this collapses them
+#    into one timeout driving the new bin/moarchy-idle-action (lock, then
+#    moarchy-idle-suspend), so suspend does not depend on a second independent
+#    timeout firing after the first acted. config/hypr/autostart.lua updated to
+#    match; moarchy-idle-blank retained but off the idle path. This also
+#    documents the real reason earlier overnight tests saw zero suspends
+#    (fp4-defects D28): the swayidle under test was relaunched over ssh and so
+#    had no logind seat, and polkit denies suspend (auth_admin) to a seatless
+#    session -- the boot/in-session swayidle (launched via hl.exec_cmd on seat0)
+#    is authorized (pkcheck rc=0) and suspends fine. Not a code bug in note 9.
+pkgrel=13
 pkgdesc="Omarchy's look, keybindings and theming on a phone, under Hyprland"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
@@ -466,6 +502,8 @@ package() {
   # matches on the action id, which then simply never appears.
   install -Dm644 "$_repo/default/polkit/49-moarchy-store.rules" \
     "$pkgdir/usr/share/polkit-1/rules.d/49-moarchy-store.rules"
+  install -Dm644 "$_repo/default/polkit/50-moarchy-docker.rules" \
+    "$pkgdir/usr/share/polkit-1/rules.d/50-moarchy-docker.rules"
 
   # The torch tile's permission. 73 so it runs after feedbackd's 72, which
   # tries to do this and cannot on Arch -- the rule's own header has the whole
