@@ -235,13 +235,27 @@ say "boot image"
 #                    so the phone mounted root correctly and died one exec
 #                    later, showing two penguins and nothing else, for a whole
 #                    night. Do not remove this line.
+#   deferred_probe_timeout=60
+#                    The LPASS audio pinctrl cannot probe until the ADSP has
+#                    registered its clock services, which on a slow boot slips
+#                    past the kernel's 10 s default deferred-probe window
+#                    (CONFIG_DRIVER_DEFERRED_PROBE_TIMEOUT). When it does, the
+#                    pinctrl and every consumer -- both macros, both SoundWire
+#                    controllers, the sound card -- give up and audio is silently
+#                    gone for the whole boot, not retried (fp4-defects.md D10,
+#                    ~1-in-8 boots). 60 s clears the ADSP-ready window with margin
+#                    and costs nothing on a normal boot (the timeout only bites a
+#                    genuinely unprobeable device). If ABL turns out to strip this
+#                    param, the fallback is bumping the config value and rebuilding
+#                    the kernel. Verify with `grep -o deferred_probe_timeout=[0-9]*
+#                    /proc/cmdline` on the device.
 #
 # There is deliberately NO console= here, and adding one does nothing: ABL
 # strips it and appends console=null. Verified from a shell on the device --
 # `grep -o "console=[^ ]*" /proc/cmdline` returns console=null alone and
 # /proc/consoles lists only ttynull0. Nothing printed during boot is ever
 # visible here, which is why the assertions in this file exist at all.
-local CMDLINE=${CMDLINE:-"root=PARTLABEL=$ROOT_PARTLABEL ro rootwait rootfstype=ext4 init=/sbin/init"}
+local CMDLINE=${CMDLINE:-"root=PARTLABEL=$ROOT_PARTLABEL ro rootwait rootfstype=ext4 init=/sbin/init deferred_probe_timeout=60"}
 info "cmdline: $CMDLINE"
 
 # No --ramdisk: this kernel mounts root itself (D24).
