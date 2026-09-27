@@ -1817,7 +1817,17 @@ Item {
           // is 0 wide and `clearButton.left` is the pill's right edge, so the
           // field is back to filling the pill and F1 still holds: every pixel
           // of the drawn pill focuses it.
-          Ui.TextField {
+          // A plain TextInput, NOT the shell's Ui.TextField (a QtQuick Controls
+          // widget). moarchy-keyboard binds zwp_input_method_v2 and Qt drives
+          // text-input-v3 only for a real TextInput/TextField that holds focus;
+          // the Controls TextField does not participate, so the OSK typed
+          // nowhere in this field (fp4-defects.md D27). moarchy already migrated
+          // its own fields to a plain TextInput (default/omarchy/qs_ui/TextField.qml,
+          // whose header records exactly this) -- the app drawer was the one
+          // field that got missed. Swapping to TextInput is the fix; the earlier
+          // forceActiveFocus attempt failed because focus was never the problem,
+          // the widget was.
+          TextInput {
             id: searchField
             anchors.left: parent.left
             anchors.right: clearButton.left
@@ -1828,21 +1838,36 @@ Item {
             // button's slot already carries the gap on that side, and a second
             // one would leave the caret stranded well short of the glyph.
             rightPadding: clearButton.visible ? Style.space(4) : Style.space(16)
-            // The control is taller than its line now, so it has to be told
-            // where that line goes. Left at the default the text renders
-            // against the top of the pill.
+            // Taller than its line, so tell it where the line goes; left at the
+            // default the text renders against the top of the pill.
             verticalAlignment: TextInput.AlignVCenter
-            placeholderText: "Search apps and settings"
-            background: null
-            verticalPadding: 0
+            clip: true
+            selectByMouse: true
+            color: root.textOnSurface
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
             onTextChanged: queryDebounce.restart()
+            // No focusPolicy (Controls-only): a TextInput takes active focus on
+            // press by default, which is what the tap below relies on. Not
+            // focus:true, so Exclusive keyboardFocus does not park here on map.
+            activeFocusOnTab: false
+
+            // The placeholder, drawn as a child since TextInput has no
+            // placeholderText. Subdued, matching the search glyph.
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.left: parent.left
+              anchors.leftMargin: searchField.leftPadding
+              visible: !searchField.text.length
+              text: "Search apps and settings"
+              color: root.subdued
+              font: searchField.font
+            }
 
             // G14a. A press that *starts* on this field, and only once the
-            // app drawer is sitting still. ClickFocus keeps Exclusive from parking
-            // here on map. onPressed rather than a TapHandler: the pill slides
-            // under the opening finger, and onTapped fires on that release.
-            focusPolicy: Qt.ClickFocus
-            activeFocusOnTab: false
+            // app drawer is sitting still. onPressed rather than a TapHandler:
+            // the pill slides under the opening finger, and onTapped fires on
+            // that release.
             MouseArea {
               anchors.fill: parent
               enabled: root.keyboardRaiseArmed
