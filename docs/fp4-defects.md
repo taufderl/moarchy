@@ -165,9 +165,15 @@ period is the access point's setting, not the station's.
 
 ## D8 — GPS runs but never reaches a fix; no A-GPS assistance {#d8}
 
-**Status: OPEN.** The receiver runs and streams NMEA; what it does not do is
-reach a fix in any reasonable time, because it has no assistance data and must
-cold-start from the sky alone.
+**Status: OPEN, REFRAMED 2026-09-28.** The receiver runs and streams NMEA but
+never reaches a fix indoors because it has no assistance data. The earlier
+conclusion below - that the assistance *indication path* is firmware-dead and
+there is "no config-only fix" - is now shown to be **only half right**: the
+failure is real, but it is **ModemManager-specific, not firmware**. A direct
+libqmi/qmicli client drives the same QMI-LOC assistance queries that MM fails.
+Predicted-orbits (xtra) can be *transferred* into the modem in full from
+userspace; the one remaining wall is the modem rejecting the assembled xtra at
+its final validation step. See *Reframed 2026-09-28* below.
 
 No kernel GNSS device exists and none is needed: the receiver is the modem's,
 reached through ModemManager, which reaches the QMI Location service (id 16,
@@ -225,13 +231,80 @@ cause is the modem's QMI-LOC assistance/indication path (izat/xtra), not a
 missing config toggle and not the network — the LOC service answers for the
 raw receiver but never completes the assistance handshake.
 
-**What would actually fix it:** get the predicted-orbits / SUPL assistance
-indication path working — the missing xtra/izat data path that pmOS edge ships
-and this build does not (a modem-firmware/assistance-data investigation, now
-confirmed as the blocker by the direct A-GPS test above), or accept cold-start
-times and give the receiver a genuine 15-minute clear-sky window. There is no
-config-only fix; the capability is advertised but the firmware handshake behind
-it is incomplete on this image.
+### Reframed 2026-09-28: the assistance query works; injection reaches finalization
+
+The A-GPS tests above were all run *through ModemManager*. Driving QMI-LOC
+directly (qmicli / a small libqmi-GIR client over `qrtr://0`, coexisting with
+MM via qmi-proxy) tells a very different story. **Every step MM fails, a direct
+client completes** - the modem stayed `connected`/`attached` throughout, and
+the worst-case recovery is a `systemctl restart ModemManager`, never a reboot.
+
+- **The predicted-orbits data-source query works.**
+  `qmicli -d qrtr://0 --loc-get-predicted-orbits-data-source` returns exit 0
+  and the live xtra server list:
+  `https://path{1,2,3}.xtracloud.net/xtra3Mgrbej.bin`. So the modem's LOC
+  assistance path answers a direct client fine - MM's "couldn't load supported
+  assistance data types: Failed to receive indication…" is **not** a dead
+  firmware handshake.
+- **Likely MM root cause: a missing TLV.** The data-source indication carries
+  the server list but **omits `allowed_sizes`** (max file / max part size). MM
+  needs those to chunk the download, so when they are absent it gives up and
+  sets `SupportedAssistanceData = NONE` - which also disables MM's own
+  `InjectAssistanceData` D-Bus method. qmicli, meanwhile, exposes no xtra
+  inject at all. That is why *both* stock paths dead-end.
+- **The xtra file is reachable and current.** `xtra3Mgrbej.bin` is ~64 KiB,
+  `Last-Modified` refreshed roughly hourly (a signed XTRA3 file). The filename
+  is stable; only the server order rotates.
+- **Predicted orbits can be transferred into the modem from userspace.** A
+  ~90-line libqmi-GIR injector (`inject_xtra_data`, chunked, lock-step on the
+  per-part indication) pushes the whole file: **every part is acknowledged
+  `indication_status = SUCCESS`**. The generic `inject_predicted_orbits_data`
+  (with `format_type = XTRA`) is **`NotSupported` (QMI error 94)** on this
+  firmware; the XTRA-specific `inject_xtra_data` is the supported message.
+- **The wall: finalization is a non-functional stub.** Every part transfers
+  (per-part indication `SUCCESS`, verified in a `QMI_DEBUG` trace - the sent
+  Part Data bytes match the file exactly, so no transit corruption), but the
+  **terminal** indication is always `GENERAL_FAILURE (1)` with a **fixed detail
+  code 2** and validity stays `missing`. This was isolated exhaustively and the
+  result is invariant across: xtra **v1/v2/v3**; part sizes 1024 (the modem's
+  hard max - 1025 gives `ArgumentTooLong`) and even-division 997; UTC time
+  injected (clock NTP-synced); GNSS engine stopped and started via MM;
+  `register_events` for the inject/engine events beforehand; and 1-based part
+  numbers (0-based -> `MalformedMessage`). The `detail=2` is constant regardless
+  of `total_parts` (41/60/64/65 all report 2), so it is a reason code, not a
+  part number. The generic `inject_predicted_orbits_data` (0x0025) is
+  `NotSupported` (QMI 94) - the LOC service simply does not implement it.
+  Conclusion: on this MPSS build (`MPSS.HI.2.5.1 BITRA`, Nov 2023) the QMI-LOC
+  xtra path answers queries and buffers the transfer but its **finalization is
+  not implemented** for a mainline client. Android reaches the same modem
+  through the proprietary izat/loc-HAL, not this QMI-LOC message, so "Android
+  does it" does not translate to a mainline userspace fix here.
+
+**Where this leaves a fix.** Predicted-orbits (xtra) A-GPS is **not reachable
+from mainline userspace on this modem firmware** - not because the assistance
+path is dead (it answers queries fine), but because the QMI-LOC xtra
+*finalization* is a stub. The remaining paths are all heavy: (1) a modem
+firmware that implements QMI-LOC xtra finalization (unknown which, if any);
+(2) reverse-engineer the proprietary izat/loc-HAL sequence Android uses and
+reimplement it (large, uncertain - this is roughly what the FP6 pmOS GPS
+bring-up required); (3) capture the exact `detail=2` meaning from Qualcomm QMI
+headers to confirm it is "unsupported/disabled" rather than a missing step.
+
+The **one lever that works** is coarse assistance: `--loc-inject-time` succeeds
+and `--loc-inject-position-*` is available. That only turns a cold start into a
+warm one (~30 s) *once almanac/ephemeris is cached*, so it cannot produce a
+first indoor fix, but a small helper that injects time + a coarse (cell/IP)
+position on GPS-enable is a real, shippable mitigation for repeat fixes. Not
+built yet - deferred pending a decision on whether GPS is worth it given no
+xtra.
+
+The injector and data-source reader are kept at
+`scripts/fp4-gps-xtra-inject.py` (diagnostic - reaches the finalization stub;
+not a working fix). Operational caution: heavy qmicli LOC activity can make MM
+briefly re-enumerate the modem (seen once, index 0 -> gone -> back at 0,
+self-recovered, data reattached) - no reboot needed, but expect a short blip.
+Modem restored to as-found after testing (assistance data deleted, MM location
+back to `3gpp-lac-ci`).
 
 **A caution for testing:** do not probe the engine with `qmicli --loc-*` while
 ModemManager owns it. They share one LOC session; a `qmicli --loc-stop` tears
