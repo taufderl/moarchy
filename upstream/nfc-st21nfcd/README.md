@@ -1,71 +1,51 @@
-# ST21NFCD NFC driver — upstream RFC series
+# ST21NFCD NFC: superseded by the mainline st-nci series
 
-A Linux kernel driver for the ST21NFCD NFC controller, and the Fairphone 4
-device-tree node that uses it. Prepared for submission; **not sent.**
+**Status (2026-09-28): SUPERSEDED. Do not submit this.** The standalone driver
+here duplicated in-flight mainline work and used the wrong shape. FP4 NFC now
+converges on Kristian Brox's series, which extends the existing `st-nci` driver
+rather than adding a new one:
 
-## Status
+> nfc: st-nci: Fairphone 5 NFC bring-up (ST21NFCD)
+> https://lore.kernel.org/linux-arm-msm/20260902-fp5-st21nfcd-v4-v4-0-ded2f1c501be@proton.me/
 
-Works on the handset. The controller completes NCI 2.0 init, RF discovery
-runs, and a MIFARE Classic 4K card is detected and reported to userspace
-(SENS_RES `0002`, SEL_RES `18`, UID). Detection is what the `moarchy.nfc` app
-and `moarchy-nfc` helper use.
+sm6350-mainline PR #13 (this driver) was closed in favour of it.
 
-Passes `checkpatch.pl --strict` (only the generic "new file, does MAINTAINERS
-need updating?" note, which is addressed — the driver adds its own entry),
-`make W=1` clean on the driver, `dt_binding_check`, and `dtbs_check` on the
-board.
+## Why superseded
 
-## Why RFC
+ST21NFCD is the same controller on the FP4 and the FP5. The earlier claim that
+"no mainline driver spoke this protocol" was only true of *merged* mainline: a
+series adding exactly it was already in review (v4 by 2026-09-02, with Luca
+Weiss involved). It does the maintainer-preferred thing this staging did not:
+it adds a raw-NCI path and a `st,st21nfcd` compatible to the existing
+`drivers/nfc/st-nci/` driver, instead of a parallel `drivers/nfc/st21nfcd.c`.
 
-Two values in the driver were reverse-engineered from one Fairphone 4, not
-read from a datasheet (ST publishes none for this part). They are commented as
-observed rather than documented, and the cover letter flags them for review:
+That series also covers, more cleanly, both values this driver had
+reverse-engineered:
 
-- `0x7e` — the byte returned on an I2C read when the controller is idle.
-- `0x90` — the proprietary RF protocol number reported for MIFARE Classic,
-  which the NCI core drops as unmappable without the `get_rfprotocol` hook.
+- `0x90` (our MIFARE proprietary-protocol / `get_rfprotocol` remap): obviated.
+  The st-nci series consumes the proprietary RF NTF `0xf02` (GID 0xf, OID 0x02)
+  and lets the standard `RF_INTF_ACTIVATED_NTF` report the tag. Luca contributed
+  that handling to v4.
+- `0x7e` (our "idle read" byte): an artifact of this driver's read path. The
+  st-nci path reads only on IRQ, so an idle read does not arise and there is
+  nothing to detect.
 
-Not yet exercised: card emulation, tag types beyond ISO 14443-A, suspend/
-resume. The RFC asks reviewers what they would want covered before a non-RFC
-posting.
+So there is no review input to add to the st-nci series from here.
 
-## The series
+## What still needs doing for the FP4
 
-| patch | subsystem | goes to |
-| --- | --- | --- |
-| 0001 binding | dt-bindings/net/nfc | NFC subsystem |
-| 0002 driver + MAINTAINERS | drivers/nfc | NFC subsystem |
-| 0003 FP4 device tree | arch/arm64 qcom | qcom/arm-soc, after the binding settles |
+Only the FP4 device-tree node, and only once `st,st21nfcd` lands upstream. It
+must follow the st-nci binding's shape (interrupts-extended, pinctrl,
+`vdd-io-supply`/clocks, `ese-present`/`uicc-present`), not the simpler `nfc@8`
+node that was in patch 0003 here. Track the series above; when its binding
+merges, add the sm7225 node the same way the mic (sm6350-mainline#11) and amp
+(#12) DT work went.
 
-Patches 1–2 are the generic contribution and stand alone. Patch 3 depends on
-the driver's `compatible` and is included for context; on the FP4 it would
-also follow the mic (sm6350-mainline#11) and amp (#12) work, which is where
-this device's other DT changes have gone.
+## Historical record
 
-## Recipients
-
-From `scripts/get_maintainer.pl` on the driver patch:
-
-- David Heidelberg <david@ixit.cz> — NFC subsystem maintainer
-- oe-linux-nfc@lists.linux.dev — NFC list
-- linux-kernel@vger.kernel.org
-
-The DT patch (0003) additionally wants the qcom and devicetree lists; run
-`get_maintainer.pl` on it at send time.
-
-## To send (not done here)
-
-```
-git config sendemail.to "David Heidelberg <david@ixit.cz>"
-git send-email --to=oe-linux-nfc@lists.linux.dev \
-  --cc=linux-kernel@vger.kernel.org 00*.patch
-```
-
-Do a `--dry-run` first, and post from the personal identity
-(`tadl-git@taufderl.de`), which is the Signed-off-by and MAINTAINERS entry.
-
-## Where the code lives
-
-The commits are on branch `fp4-nfc` in the sm6350 kernel tree used for FP4
-work (not in this repo — only these generated patches and this note travel
-here). The driver is board-agnostic; only patch 3 mentions the FP4.
+The original standalone series (kept for reference only, not for submission)
+was three patches: a new `st,st21nfcd` binding, a new `drivers/nfc/st21nfcd.c`
+plain-NCI driver, and the FP4 `nfc@8` node. It worked on the handset (NCI 2.0
+init, RF discovery, MIFARE Classic 4K detected: SENS_RES 0002, SEL_RES 18, UID)
+and passed `checkpatch.pl --strict`, `make W=1`, `dt_binding_check` and
+`dtbs_check`. It is superseded by the st-nci approach above.
