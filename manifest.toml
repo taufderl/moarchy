@@ -439,7 +439,9 @@ keyid   = "3CA83612E7F3108F442006B418305B893569BAD3"
 # somebody had added the stanza to it by hand months earlier.
 # ---------------------------------------------------------------------------
 [repo.apps]
-name    = "moarchy-apps"
+# Renamed upstream 2026-09-28: the published pacman repo is now [market-apps]
+# (same gh-pages path, same signing key); the source repo stays moarchy-apps.
+name    = "market-apps"
 server  = "https://simonschubert.github.io/moarchy-apps/aarch64"
 keyid   = "3CA83612E7F3108F442006B418305B893569BAD3"
 
