@@ -68,12 +68,13 @@ _ver=$(manifest_get moarchy version) || return 1
 pkgname=moarchy-device-fp4
 pkgver=$_ver
 # pkgrel 3: megapixels-fp4.conf rear camera stays on the ultra-wide
+# pkgrel 4: wifi-powersave.conf disables ath10k power-save globally (D5)
 # (csiphy0 / imx582 1-001a). The main sensor (csiphy2, from Fairphone's board
 # device tree) was tested on the handset and came out soft -- mainline
 # qcom-camss has no autofocus actuator, so the main's lens is stuck at rest
 # focus, while the ultra-wide is fixed-focus and sharp. Config comment records
 # the finding so it is not re-tried blind. See docs/fp4-fixes.md D6.
-pkgrel=3
+pkgrel=4
 pkgdesc="Fairphone 4 (fp4) hardware support for moarchy"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
@@ -142,9 +143,10 @@ source=('hypr-device.lua' 'device.conf'
         'usb-debug.sh' 'moarchy-usb-debug.service'
         'hexagonrpcd-sensors-root.conf' 'megapixels-fp4.conf'
         '53-fp4-ucm.conf' 'moarchy-fp4-mic-route.service'
-        'fp4-audio-route.sh' 'q6voiced.conf')
+        'fp4-audio-route.sh' 'q6voiced.conf'
+        'wifi-powersave.conf')
 sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
-            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 package() {
   install -Dm644 "$srcdir/device.conf" "$pkgdir/usr/share/moarchy/device/device.conf"
@@ -281,4 +283,13 @@ package() {
   install -d "$pkgdir/usr/lib/systemd/system/multi-user.target.wants"
   ln -s ../qbootctl-mark-successful.service \
     "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/qbootctl-mark-successful.service"
+
+  # --- network --------------------------------------------------------------
+  #
+  # Disable WiFi power-save globally. See wifi-powersave.conf for the why (D5):
+  # ath10k's default parks the receiver between DTIM beacons and adds ~50-80ms
+  # of inbound latency after any idle gap. A conf.d drop-in rather than a
+  # per-connection key so it holds for every network the user ever joins.
+  install -Dm644 "$srcdir/wifi-powersave.conf" \
+    "$pkgdir/usr/lib/NetworkManager/conf.d/90-moarchy-fp4-wifi-powersave.conf"
 }

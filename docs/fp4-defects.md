@@ -84,7 +84,8 @@ blueprint — `RXD = TP1102`, `TXD = TP1104`, `GND = TP4810`.
 
 ## D5 — Wi-Fi latency tracks the radio's sleep cadence {#d5}
 
-**Status: OPEN, but understood.** Found 2026-09-22 while disproving D4.
+**Status: RESOLVED 2026-09-28** - power-save disabled globally (see
+*Resolution* below). Found 2026-09-22 while disproving D4.
 Not a fault in the link, and probably not a fault at all — recorded because
 it looks alarming and will otherwise be rediscovered and misattributed.
 
@@ -135,15 +136,30 @@ the connection dropping. Nothing dropped here, across every run. They may
 share a cause; nothing establishes that, and conflating them would make a
 solved problem look unsolved.
 
-Power save was left **on**, as found: it is presumably there for battery life,
-and turning it off permanently is a trade nobody has made. `sudo iw dev wlan0
-set power_save off` is the lever.
+### Resolution
 
-**Next, if it ever matters:** the interesting question is why beacon-cadence
-wakeups persist with power save off, since that is the driver's or firmware's
-own power management rather than the one `iw` controls. Worth comparing
-against another AP with a DTIM of 1 before blaming the phone — DTIM period is
-the access point's setting, not the station's.
+Power-save is now disabled globally, because on this handset the awake-but-idle
+window it optimises is short - the system idle path is s2idle (D28), which
+suspends the radio outright - so the DTIM-cadence latency it buys costs
+interactive feel for almost no real battery return. `moarchy-device-fp4` ships
+`/usr/lib/NetworkManager/conf.d/90-moarchy-fp4-wifi-powersave.conf` with
+`[connection] wifi.powersave=2`, a conf.d default rather than a per-connection
+key so it holds for every network the user ever joins. `/etc` is left free for
+an operator override.
+
+Verified 2026-09-28: with the drop-in in place, power-save set back **on** and
+the connection fully re-activated (`nmcli con down/up`) comes up **off** driven
+by the default alone - i.e. it persists across a reconnect, not just a manual
+`iw` for one session. Re-measured host->phone with it off: min **3.6** / avg
+**45.6** / max **108.6** ms, 0% loss - the beacon-cadence row above, versus the
+DTIM-cadence avg 122 ms it replaces.
+
+This only demotes the station from DTIM to beacon cadence; it does not reach
+the ~5 ms the link is capable of continuously awake. **Why beacon-cadence
+wakeups persist even with power-save off** is driver/firmware power management
+below what `iw` controls, and is the remaining lever if this ever needs to go
+further - worth comparing against an AP with a DTIM of 1 first, since DTIM
+period is the access point's setting, not the station's.
 
 ---
 
