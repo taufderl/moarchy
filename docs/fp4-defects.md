@@ -552,7 +552,12 @@ to make the unit pass the slot explicitly.
 
 ## D12 — Hyprland draws a "started without start-hyprland" banner {#d12}
 
-**Status: FIXED 2026-09-26 (config option), pending a visual confirm.** Hyprland
+**Status: FIXED 2026-09-26 (config option), confirmed 2026-09-28.** Confirmed on
+the handset (moarchy 0.5.0-13): `hyprctl getoption misc:disable_watchdog_warning`
+returns `set: true` at runtime, which is the option that suppresses the banner.
+(A `grim` screenshot was attempted as a visual double-check but blocked, most
+likely on a locked/blanked screen; the runtime option value is the authoritative
+confirmation.) Hyprland
 0.56 exposes `misc:disable_watchdog_warning` -- named for the watchdog fd
 start-hyprland passes, but its own description is literally "whether to disable
 the warning about not using start-hyprland" (confirmed via `hyprctl
@@ -875,15 +880,21 @@ it is not fixed by anything in this tree.
 
 ## D25 — the Docker TUI soft-locks: raw pkexec in a terminal {#d25}
 
-**Status: FIX APPLIED 2026-09-26 (polkit rule), UNVERIFIED.** A scoped polkit
+**Status: FIX VERIFIED 2026-09-28 (polkit rule).** A scoped polkit
 rule (`default/polkit/50-moarchy-docker.rules`, moarchy pkgrel 11) auto-authorizes
 the Docker app's `pkexec` for `wheel`, so no unanswerable password screen appears
 -- the same locked-password cause and the same fix shape as the app store
 ([D26](./fp4-fixes.md#d26)); it is no wider than the `NOPASSWD` sudo the user
-already holds. **Unverified** because `lazydocker` is not installed on the test
-handset, so the exact `command_line` the rule matches could not be confirmed; if
-the wrapper's command lacks the `lazydocker` token the rule silently won't fire
-(the D26 failure mode). The broader alternative -- grant
+already holds. **Verified on the handset 2026-09-28 without installing docker**,
+via `pkcheck` as root against the exact command the launcher runs: the deployed
+launcher does `pkexec /usr/bin/env TERM=... lazydocker`, so the `command_line`
+polkit sees contains the `lazydocker` token the rule matches. `pkcheck
+--action-id org.freedesktop.policykit.exec --detail command_line "/usr/bin/env
+TERM=xterm-256color lazydocker"` for a `wheel` process returns
+`polkit.result=yes` (rc=0, no prompt); a non-lazydocker command returns
+`auth_admin` (rc=2), so the rule is correctly scoped and does not blanket-grant
+pkexec. The earlier concern (that the wrapper's command might lack the
+`lazydocker` token, the D26 failure mode) is thus ruled out. The broader alternative -- grant
 `org.freedesktop.policykit.exec` for `wheel` unconditionally -- fixes the whole
 class of terminal-pkexec soft-lock on this un-answerable device and is still
 bounded by that sudo; it's a security-posture call left to the owner.
