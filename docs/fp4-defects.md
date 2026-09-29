@@ -6,7 +6,7 @@ record why something was wrong for a reason that was not the obvious one.
 
 The camera and the sensors both left this file on 2026-09-24 — see D6, D7 and
 D24 in the fixes. Both had been recorded as fixed once already and were not,
-which is the reason each entry there keeps the wrong turns as well as the fix.
+which is the reason each entry there keeps the wrong turns as well as the fix. D5, D12, D25 and D27 left on 2026-09-29; see the fixes.
 
 Sources: what the handset does, the
 [postmarketOS wiki](https://wiki.postmarketos.org/wiki/Fairphone_4_(fairphone-fp4))
@@ -18,17 +18,13 @@ configuring. `WONTFIX` — understood and deliberately left.
 
 | id | what | status |
 | --- | --- | --- |
-| [D5](#d5) | Wi-Fi latency tracks the radio's sleep cadence | **OPEN** |
 | [D8](#d8) | GPS runs but never reaches a fix; no A-GPS assistance | **OPEN** |
 | [D10](#d10) | The LPI pinctrl loses a boot race and takes all audio with it | **OPEN** |
 | [D11](#d11) | The phone drops into EDL after repeated reboots | **OPEN — important** |
-| [D12](#d12) | Hyprland draws a "started without start-hyprland" banner | **OPEN** |
 | [D19](#d19) | The fingerprint reader is an Egis part with no Linux path | **UNSUPPORTED** |
 | [D21](#d21) | Bluetooth carries music but not call audio | **OPEN** |
 | [D22](#d22) | The touchscreen controller logs recurring i2c failures | **OPEN** |
 | [D23](#d23) | The camera's CSI PHY supplies are undescribed, and a clock sticks on | **OPEN** |
-| [D25](#d25) | Docker TUI soft-locks: pkexec in a terminal, no passwordless action | **OPEN** |
-| [D27](#d27) | The on-screen keyboard does not work in the app drawer search | **OPEN** |
 
 ---
 
@@ -79,87 +75,6 @@ mmcli -m any --location-enable-gps-nmea
 
 and the serial console is on test points given in Fairphone's own repair
 blueprint — `RXD = TP1102`, `TXD = TP1104`, `GND = TP4810`.
-
----
-
-## D5 — Wi-Fi latency tracks the radio's sleep cadence {#d5}
-
-**Status: RESOLVED 2026-09-28** - power-save disabled globally (see
-*Resolution* below). Found 2026-09-22 while disproving D4.
-Not a fault in the link, and probably not a fault at all — recorded because
-it looks alarming and will otherwise be rediscovered and misattributed.
-
-The link is excellent: **-49 dBm**, **433.3 MBit/s** VHT-MCS 9 on 80 MHz,
-**0% loss in every run**. The latency does not match it:
-
-| power save | min | avg | max | mdev |
-| --- | --- | --- | --- | --- |
-| **on** (default) | 22.2 | **122.0** | 217.4 | 57.2 ms |
-| **off** | 5.0 | **55.7** | 107.2 | 50.3 ms |
-
-For comparison the USB link to the same handset answers in **3.6 ms**.
-
-### It is sleep, not weakness
-
-The numbers are quantised to the radio's own cadence. `iw dev wlan0 link`
-reports `dtim period: 3` and `beacon int: 100`, so:
-
-- power save **on** — the station wakes on the DTIM, every 3 x 100 ms =
-  **300 ms**. Observed max 217 ms fits inside that window and the average is
-  about half of it, which is what uniformly-arriving packets give.
-- power save **off** — max collapses to **107 ms**, i.e. the **100 ms** beacon
-  interval, and the average is again about half.
-
-So `power_save off` does take effect, and *stays* off across a run — but it
-only demotes the station from DTIM cadence to beacon cadence. It never
-reaches continuously-awake, which is what the ~5 ms minimum shows the link is
-capable of.
-
-### It is latency only
-
-Bulk throughput is unaffected, because once TCP ramps up the station stops
-sleeping:
-
-| | |
-| --- | --- |
-| scp 8 MB over Wi-Fi | 7.6 MB/s |
-| scp 8 MB over USB | 21.4 MB/s |
-
-A latency-only problem and a throughput problem have different causes, and
-this is firmly the former. Interactive use over Wi-Fi feels bad; file
-transfer does not.
-
-### Not the same thing as §10.4
-
-`fairphone-4.md` §10.4 tracks Wi-Fi *instability* upstream (pmaports#2841) —
-the connection dropping. Nothing dropped here, across every run. They may
-share a cause; nothing establishes that, and conflating them would make a
-solved problem look unsolved.
-
-### Resolution
-
-Power-save is now disabled globally, because on this handset the awake-but-idle
-window it optimises is short - the system idle path is s2idle (D28), which
-suspends the radio outright - so the DTIM-cadence latency it buys costs
-interactive feel for almost no real battery return. `moarchy-device-fp4` ships
-`/usr/lib/NetworkManager/conf.d/90-moarchy-fp4-wifi-powersave.conf` with
-`[connection] wifi.powersave=2`, a conf.d default rather than a per-connection
-key so it holds for every network the user ever joins. `/etc` is left free for
-an operator override.
-
-Verified 2026-09-28: with the drop-in in place, power-save set back **on** and
-the connection fully re-activated (`nmcli con down/up`) comes up **off** driven
-by the default alone - i.e. it persists across a reconnect, not just a manual
-`iw` for one session. Re-measured host->phone with it off: min **3.6** / avg
-**45.6** / max **108.6** ms, 0% loss - the beacon-cadence row above, versus the
-DTIM-cadence avg 122 ms it replaces.
-
-This only demotes the station from DTIM to beacon cadence; it does not reach
-the ~5 ms the link is capable of continuously awake. **Why beacon-cadence
-wakeups persist even with power-save off** is driver/firmware power management
-below what `iw` controls, and is the remaining lever if this ever needs to go
-further - worth comparing against an AP with a DTIM of 1 first, since DTIM
-period is the access point's setting, not the station's.
 
 ---
 
@@ -550,62 +465,6 @@ to make the unit pass the slot explicitly.
 
 ---
 
-## D12 — Hyprland draws a "started without start-hyprland" banner {#d12}
-
-**Status: FIXED 2026-09-26 (config option), confirmed 2026-09-28.** Confirmed on
-the handset (moarchy 0.5.0-13): `hyprctl getoption misc:disable_watchdog_warning`
-returns `set: true` at runtime, which is the option that suppresses the banner.
-(A `grim` screenshot was attempted as a visual double-check but blocked, most
-likely on a locked/blanked screen; the runtime option value is the authoritative
-confirmation.) Hyprland
-0.56 exposes `misc:disable_watchdog_warning` -- named for the watchdog fd
-start-hyprland passes, but its own description is literally "whether to disable
-the warning about not using start-hyprland" (confirmed via `hyprctl
-descriptions`). Set it in `config/hypr/input.lua` (moarchy pkgrel 12). This turns
-the banner off **without** adopting start-hyprland, which the note below rightly
-flags as risky: it is a 264 KB binary that manages an instance and does more than
-exec, so swapping it into `zz-moarchy.sh` unexamined could boot the phone to no
-UI. The session still execs `Hyprland -c ...` as before; only the nag is
-silenced. **Confirm:** the red banner across the top is gone once the updated
-`input.lua` is deployed and Hyprland reloads (a `hyprctl reload`, or the package
-deploy). `hyprctl keyword` cannot set it live here -- under the `.lua` config the
-legacy keyword parser is refused (same reason moarchy-screen uses `hl.*` eval),
-and there is no `hl.keyword` in this API, so it lands via the config, not a
-runtime poke.
-
-**Status (historical): OPEN**, cosmetic, and not device-specific.
-
-A red-underlined banner sits across the top of the screen:
-
-> was started without start-hyprland. This is strongly discouraged unless you
-> are in a debugging environment.
-
-It overlaps the clock and the status icons, so it is hard to ignore.
-
-Nothing on this phone caused it. `/etc/profile.d/zz-moarchy.sh` is owned by
-`moarchy 0.5.0-6`, is unmodified, and ends with
-
-```sh
-exec Hyprland -c /usr/share/moarchy/config/hypr/hyprland.lua
-```
-
-which is deliberate — `image/verify.sh` has a check that asserts exactly that
-line exists. What changed is Hyprland: 0.56.2 ships `/usr/bin/start-hyprland`
-and warns whenever the compositor is launched without it.
-
-The fix is presumably to exec the wrapper instead, but that is a change to how
-every moarchy device starts its session, and `start-hyprland` does more than
-exec — it manages an instance, reads state and can run things itself. Swapping
-it in unexamined risks a phone that boots to no UI, which is a worse defect
-than a banner.
-
-**Next:** read what `start-hyprland` actually does, check whether it respects
-`-c`, and if so change `zz-moarchy.sh` and the matching assertion in
-`image/verify.sh` together. Worth doing on a device that can be recovered
-easily rather than on the phone.
-
----
-
 ## D19 — the fingerprint reader is an Egis part with no Linux path {#d19}
 
 **Status: UNSUPPORTED**, and investigated 2026-09-24 far enough to say what it
@@ -877,145 +736,6 @@ independent of the supplies, and belongs upstream with the SoC's CAMSS support;
 it is not fixed by anything in this tree.
 
 ---
-
-## D25 — the Docker TUI soft-locks: raw pkexec in a terminal {#d25}
-
-**Status: FIX VERIFIED 2026-09-28 (polkit rule).** A scoped polkit
-rule (`default/polkit/50-moarchy-docker.rules`, moarchy pkgrel 11) auto-authorizes
-the Docker app's `pkexec` for `wheel`, so no unanswerable password screen appears
--- the same locked-password cause and the same fix shape as the app store
-([D26](./fp4-fixes.md#d26)); it is no wider than the `NOPASSWD` sudo the user
-already holds. **Verified on the handset 2026-09-28 without installing docker**,
-via `pkcheck` as root against the exact command the launcher runs: the deployed
-launcher does `pkexec /usr/bin/env TERM=... lazydocker`, so the `command_line`
-polkit sees contains the `lazydocker` token the rule matches. `pkcheck
---action-id org.freedesktop.policykit.exec --detail command_line "/usr/bin/env
-TERM=xterm-256color lazydocker"` for a `wheel` process returns
-`polkit.result=yes` (rc=0, no prompt); a non-lazydocker command returns
-`auth_admin` (rc=2), so the rule is correctly scoped and does not blanket-grant
-pkexec. The earlier concern (that the wrapper's command might lack the
-`lazydocker` token, the D26 failure mode) is thus ruled out. The broader alternative -- grant
-`org.freedesktop.policykit.exec` for `wheel` unconditionally -- fixes the whole
-class of terminal-pkexec soft-lock on this un-answerable device and is still
-bounded by that sudo; it's a security-posture call left to the owner.
-
-**Correction to the note below:** a graphical polkit agent IS present
-(`config/hypr/autostart.lua` starts `polkit-gnome-authentication-agent-1`); the
-real trap is not a missing agent but that the dialog it raises cannot be answered
-(locked password, no OSK for it) and the Docker terminal blocks there.
-
-**Status (historical): OPEN**, lower priority since the app store -- the case that mattered --
-is fixed separately ([D26](./fp4-fixes.md#d26)). Reproduced 2026-09-24,
-recovered over SSH.
-
-Opening the **Docker** app froze the phone: it stopped on a password screen, the
-on-screen keyboard would not come up for it, and the app could not be closed. The
-phone was not crashed -- Hyprland stayed responsive -- but from the touchscreen
-there was no way forward or out.
-
-Cause: `omarchy-launch-docker-tui` runs `pkexec ... lazydocker` in a foot
-terminal. `pkexec` needs root authorisation, and with no graphical polkit agent
-handling it, it falls back to reading a password on the terminal's TTY. A TTY
-password read is not a text field, so the on-screen keyboard cannot feed it, and
-the terminal blocks there. Nothing offered a way to dismiss the window either.
-
-So any pkexec-gated app launched into a terminal is a soft-lock trap on a
-touch-only device. Docker is the one found; the pattern is the risk.
-
-Recovery, for the record: over SSH, `hyprctl clients` to find the stuck window
-(class `TUI.tile`, running `omarchy-launch-docker-tui`), then kill its process
-chain. From the phone alone there was no recovery.
-
-**The fix is a design choice, not a typo**, so it is left for a decision:
-
-- a graphical polkit agent whose dialog the on-screen keyboard *can* fill would
-  make pkexec prompts answerable, and fixes this for every such app at once; or
-- the Docker launcher should not need root interactively on a phone -- rootless
-  docker, or the user in the `docker` group, removes the prompt; or
-- at minimum, an app that will pkexec should be reachable-and-cancellable, so a
-  failed or unanswerable prompt cannot trap the session.
-
-Until then, avoid the Docker app on the handset.
-
----
-
-## D27 — the on-screen keyboard does not work in the app drawer search {#d27}
-
-**Status: FIXED 2026-09-27, confirmed on the handset.** Real root cause: the app
-drawer is the shell's ONLY text field on a **layer surface** (a `PanelWindow`);
-every field that works -- Wi-Fi passphrase, Mail, Files, Contacts -- is a regular
-`AppWindow`. When open, the drawer holds `WlrKeyboardFocus.Exclusive` AND its
-input region is the whole screen (`mask` is null), and an Exclusive-keyboard-focus
-layer surface makes Hyprland route **all touch** to it. So the on-screen keyboard,
-though it sits on a higher layer, received **no `wl_touch` at all** while the
-drawer was open -- no key even highlighted, and the omarchy/symbol keys were dead
-too. Keys went nowhere because the OSK never saw the taps, not because of any
-text-input focus problem.
-
-The earlier 2026-09-26 diagnosis (kept below) was **wrong**: it blamed the field
-being a Controls widget and swapped it for a plain `TextInput`. But
-`qs.Ui.TextField` was already a plain `TextInput`, so that changed nothing --
-proven by a `WAYLAND_DEBUG` trace of `moarchy-keyboard` (the OSK got zero
-`wl_touch` while the drawer was open) and by the user's observation that keys
-highlight in apps but are completely dead in the drawer. That reframed it from
-"focus routing" to "touch never arrives."
-
-**Fix:** the drawer's `keyboardFocus` (AppDrawer.qml) is now `OnDemand` instead of
-`Exclusive`. OnDemand takes keyboard focus on tap -- enough to focus the search
-field -- without grabbing pointer/touch away from the OSK. Verified on the FP4
-2026-09-27: the OSK types into the search and the grid filters. The
-close-drag-to-dismiss (the reason `Exclusive` was originally chosen) **still works
-under OnDemand** -- verified open -> drag-down -> closed. moarchy pkgrel bumped.
-
-Minor remaining nit (by design): raising the OSK via the bottom keyboard *icon*
-does not focus the search field (that icon is a generic OSK-raise); tapping the
-search field directly both focuses it and raises the OSK, which is the intended
-gesture.
-
-The original open-investigation notes are kept below for the record.
-
-**Status (historical): OPEN**, reported 2026-09-24. Under investigation; the exact symptom
-(keyboard does not appear vs. appears but does not type) is still to be pinned.
-
-The app drawer is a search field over an app grid, meant to be filtered by
-typing (`moarchy.app-drawer`). The keyboard does not do its job there.
-
-Ruled out so far:
-
-- The OSK process is healthy: `moarchy-keyboard` runs, owns `sm.puri.OSK0`, and
-  `busctl ... SetVisible b true` raises it -- the keyboard layer appears. So the
-  raise *mechanism* works when driven directly.
-- Global touch is fine (the rest of the phone is operable), so this is not a
-  disabled touchscreen.
-- Not the DPMS/lock work: `moarchy-screen`'s FLAG is clear and touch is on.
-
-Confirmed on a clean boot (2026-09-24), so it is a real defect, not the
-session churn that first surfaced it. Symptom: tapping the search box raises the
-keyboard, but keys do nothing.
-
-Everything checkable by inspection is ruled out:
-
-- **OSK health**: `moarchy-keyboard` runs, owns `sm.puri.OSK0`, `SetVisible`
-  raises the layer.
-- **Obstruction**: with the drawer open, the keyboard sits at y580-780 and
-  nothing is stacked above that region -- taps reach it.
-- **Protocol**: the OSK binds both `zwp_virtual_keyboard_v1` and
-  `zwp_input_method_v2`, so it can inject raw keys to the focused surface, which
-  a Quickshell shell field can receive.
-- **Drawer QML path**: the drawer takes `keyboardFocus: Exclusive` when open,
-  and the search field is `Qt.ClickFocus` with a MouseArea that calls
-  `osk.show()` and passes the press through (`mouse.accepted = false`) so the
-  tap also focuses the field. On paper the tap both raises the keyboard and
-  focuses the field.
-
-So the failure is runtime, not visible in the code -- most likely QML active
-focus landing on the `focusSink` (`Item { focus: true }`) rather than the
-search field, so injected keys are absorbed. Confirming that needs observing a
-live keystroke, which cannot be done over SSH.
-
-**The datapoint that splits it:** does the OSK type in another field (a browser
-URL bar, the Wi-Fi passphrase)? If yes, it is drawer-specific focus; if no, the
-OSK's key delivery to shell surfaces is broken everywhere. Pending that.
 
 ## D28 — the phone never suspends on idle; it only blanks the screen {#d28}
 
