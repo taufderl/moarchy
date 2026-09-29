@@ -9,12 +9,47 @@
   <img src="docs/screenshots/app-lcl.png" width="16%" alt="Linux Command Library, an ordinary GTK app under the gesture strip">
 </p>
 
-Omarchy's look, keybindings and theming on a phone — a **Google Pixel 3a** —
-running on Arch Linux ARM with **Sway** in Hyprland's place.
+Omarchy's look, keybindings and theming on a phone, on Arch Linux ARM, running
+**Hyprland**. This is not a fork of Omarchy's installer: it is a thin overlay
+that vendors Omarchy's *configuration and theme layer* (architecture-neutral)
+onto an aarch64 base, and replaces the parts that cannot work on this hardware.
 
-This is not a fork of Omarchy's installer. It is a thin overlay that vendors
-Omarchy's *configuration and theme layer* — which is architecture-neutral — onto
-an aarch64 base, and replaces the one part that cannot work on this hardware.
+**Compositor: this fork runs Hyprland, upstream runs Sway.** See
+[Compositor and upstream divergence](#compositor-and-upstream-divergence).
+
+## Compositor and upstream divergence
+
+Upstream [`SimonSchubert/moarchy`](https://github.com/SimonSchubert/moarchy) runs
+**Sway**. Its original targets include the PinePhone, whose Mali GPU is GLES2-only
+and cannot give Hyprland the GLES3 context its renderer needs; upstream reaches
+Sway through a build-time port (`port-4x.patch` rewriting `Quickshell.Hyprland`
+to `Quickshell.I3`).
+
+**This fork runs Hyprland, on purpose.** Its target phones are Adreno-class (the
+Fairphone 4's Adreno 619, the Pixel 3a's Adreno 615) and both clear GLES 3.2, so
+Hyprland runs natively. The reasons:
+
+- Omarchy is a Hyprland project, so running Hyprland is truer to "Omarchy's look"
+  and gives the effects (animations, blur, `hyprlock`/`hypridle`) that Sway only
+  approximates.
+- It drops the Sway port: `port-4x.patch` no longer rewrites the compositor seam,
+  the vendored shell keeps upstream's own `Quickshell.Hyprland`, and the config
+  lives in `config/hypr/`.
+
+**What the divergence affects, and what it does not.** It is confined to the
+shell's window-management surfaces (`moarchy.gestures`, `moarchy.workspace-overview`,
+and a few `bin/` helpers). Everything else is compositor-neutral: the app store
+(`moarchy-store`, a standalone app that installs through pacman) and the mobile
+apps (the `moarchy.*` plugins) have no runtime compositor coupling and behave
+identically under either compositor, so the app ecosystem is unaffected by this
+choice.
+
+**Migration status.** The compositor move is done (`config/hypr/` is the live
+config and the Sway overlay is deleted), but a few `bin/` helpers still call
+`swaymsg` and are being ported to `hyprctl`. Treat any `swaymsg` under `bin/` as
+leftover, not current design. Sections further down that still describe Sway
+mechanics (theming, gestures, "what you get and what you don't") predate this
+move and are being corrected.
 
 ## Install
 
@@ -86,20 +121,16 @@ at pins ([`docs/devices.md`](docs/devices.md) §2).
 
 Omarchy 4.x generates its per-app theming from one small file per theme,
 `colors.toml`, expanded through `default/themed/*.tpl` by
-`omarchy-theme-set-templates`. The Hyprland template (`hyprland.lua.tpl`) is
-**18 lines** — it sets window and group border colours and nothing else.
+`omarchy-theme-set-templates`; the shell reads the active theme quickshell stages
+at `~/.local/state/omarchy/current/theme/`.
 
-So the entire theme system ports by adding **one file**:
-[`default/themed/sway.conf.tpl`](default/themed/sway.conf.tpl). All **22**
-upstream themes then work on Sway with no per-theme effort, and
-`shell.toml.tpl` — which themes the whole quickshell shell — along with
-`foot.ini.tpl` and `btop.theme.tpl`, are reused untouched. (`alacritty.toml.tpl`
-is reused untouched too, and has been unused here since the phone went down to
-one terminal on 2026-09-08 — see [docs/apps.md](docs/apps.md).)
-
-Better still, that template engine already processes a *user* template directory
-(`~/.config/omarchy/themed`) ahead of its own built-ins — so moarchy adds
-Sway theming **without patching the vendored upstream at all**.
+Because this fork runs Hyprland, the compositor theming is upstream's own:
+`config/hypr/hyprland.lua` pulls the active theme's colours and `hyprctl reload`
+re-reads them on every theme change (`config/hypr/autostart.lua`), so all **22**
+upstream themes work with no per-theme effort. `shell.toml.tpl` (the whole
+quickshell shell), `foot.ini.tpl`, `btop.theme.tpl` and the GTK templates are
+reused untouched. (`alacritty.toml.tpl` is reused too, and has been unused since
+the phone went to one terminal on 2026-09-08, see [docs/apps.md](docs/apps.md).)
 
 ## What runs on it
 
@@ -146,18 +177,19 @@ the shell nor closed source.
 [`docs/omarchy-4x-feasibility.md`](docs/omarchy-4x-feasibility.md) is the
 correction. The 3.8.4 port is gone; it exists only in git history.
 
-**Why 4.x is portable.** The shell is quickshell/QML —
-architecture-neutral, and `quickshell` builds for aarch64. What is left is
-Hyprland coupling in five QML files, and `pkgbuilds/omarchy-config/port-4x.patch`
-translates those
-mechanically: `Quickshell.Hyprland` becomes `Quickshell.I3`, which speaks Sway's
-IPC. The one genuine gap is `HyprlandFocusGrab`, which has no I3 counterpart, so
-vendored popups lose click-outside-to-dismiss.
+**Why 4.x is portable.** The shell is quickshell/QML, architecture-neutral,
+and `quickshell` builds for aarch64. Upstream's shell targets Hyprland and so
+does this fork, so `pkgbuilds/omarchy-config/port-4x.patch` hosts moarchy's
+plugins in the vendored shell without touching the compositor seam: it keeps
+upstream's own `Quickshell.Hyprland`. (On Sway the patch also rewrote
+`Quickshell.Hyprland` to `Quickshell.I3`; that half was removed when the fork
+moved to Hyprland.)
 
 ## Touch gestures
 
-Sway's `bindgesture` only fires for touchpads, so the gestures are a Quickshell
-plugin that owns the bottom edge as a layer surface and reads the touch itself.
+A compositor's touchpad gesture bindings do not fire for a touchscreen, so the
+gestures are a Quickshell plugin that owns the bottom edge as a layer surface and
+reads the touch itself.
 Everything follows the finger rather than firing at a threshold.
 
 One drag up from the home pill has two stops, the way Android's does:
@@ -195,10 +227,10 @@ foot of the sheet and it closes, which is the one place a window is closed by
 hand.
 
 Two windows side by side on a 360px screen get 180px each, which nothing here
-can use — so a workspace that holds more than one is **split vertically**, one
-above the other, at 370px each. `bin/moarchy-one-app-per-workspace` does that on
-sway's own event stream, so a keyboard user's `$mod+Shift+2` lands the same way
-as the drag. Launching an app still gives it a workspace of its own — sharing one
+can use, so a workspace that holds more than one is **split vertically**, one
+above the other. Hyprland's `dwindle` layout does that natively
+(`config/hypr/looknfeel.lua` sets `force_split = 2`), so a keyboard user's
+`$mod+Shift+2` lands the same way as the drag. Launching an app still gives it a workspace of its own, sharing one
 is something you ask for, once, by dragging.
 
 The hold is the other gesture Android spends on what its owner reaches for
@@ -225,12 +257,11 @@ what each owns, how the screens stack, where a given change goes, and what to ru
 | --- | --- |
 | `default/omarchy/plugins/` | The phone UI: thirteen quickshell plugins and the shared code under `moarchy.common/` |
 | `manifest.toml` | The version pins. The only file that says what version of anything is built |
-| `pkgbuilds/` | `moarchy`, `omarchy-config` (upstream + the Sway port as a patch), `moarchy-meta`, `moarchy-keyring` |
+| `pkgbuilds/` | `moarchy`, `omarchy-config` (upstream shell + `port-4x.patch` hosting our plugins), `moarchy-meta`, `moarchy-keyring` |
 | `pkgbuilds/moarchy-meta/PKGBUILD` | The aarch64 package set, as `depends`, with every omission explained |
-| `default/sway/bindings.conf` | Omarchy's bindings, translated to Sway, key-for-key |
-| `pkgbuilds/moarchy-device-sargo/sway.conf` | 1080×2220 @ scale 3, touch, no gaps, the power key |
-| `default/themed/sway.conf.tpl` | The one file that themes Sway from any Omarchy theme |
-| `bin/moarchy-*` | Sway counterparts to Omarchy's Hyprland helpers |
+| `config/hypr/` | Omarchy's Hyprland config for the phone: bindings, monitors, look-and-feel, autostart |
+| `pkgbuilds/moarchy-device-<phone>/hypr-device.lua` | The one per-device value: panel size and scale |
+| `bin/moarchy-*` | The phone's helpers (compositor ones migrating from `swaymsg` to `hyprctl`) |
 | `bin/omarchy-*` | Shims with upstream's names, so `omarchy-menu` keeps working |
 | `docker/` | aarch64 container that builds every package natively on Apple Silicon |
 | `image/boot/android-bootimg.sh` | The boot backend: mkbootimg, AVB, the sparse rootfs |
@@ -340,15 +371,18 @@ Kept: Omarchy's keybindings, all 22 themes with live switching, the whole
 quickshell shell — bar, launcher, notifications, OSD — the `omarchy-menu`
 system, and the themed terminal/btop/fastfetch/starship stack.
 
-Gone, because they are Hyprland renderer features that a GLES 2.0 device could
-never have driven: blur, shadows, rounded corners, animations, gradient borders,
-`hyprlock` (replaced with a themed `swaylock`).
+Off by choice, not by limit: blur, shadows, rounded corners, compositor
+animations and gradient borders. The Adreno GPU clears GLES 3.2, so Hyprland
+could drive them, but `config/hypr/looknfeel.lua` disables them: every surface
+that moves on this phone is a QML sheet following a finger, and a second
+animation underneath fights it and costs battery. Lock is a themed `swaylock`
+rather than `hyprlock` by the same kind of choice, not because `hyprlock` cannot
+run here.
 
-Also dropped: universal copy/paste (Hyprland `sendshortcut` has no Sway
-equivalent), OCR capture (`tesseract` has no aarch64 build), dictation
-(`voxtype` is x86-only), and every x86-only proprietary app — 1Password, Spotify,
-Obsidian, Typora. See the bottom of `pkgbuilds/moarchy-meta/PKGBUILD` for the
-full list with reasons.
+Dropped for other reasons: OCR capture (`tesseract` has no aarch64 build),
+dictation (`voxtype` is x86-only), and every x86-only proprietary app (1Password,
+Spotify, Obsidian, Typora). See the bottom of `pkgbuilds/moarchy-meta/PKGBUILD`
+for the full list with reasons.
 
 ## Measured on the device
 
