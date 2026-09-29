@@ -251,9 +251,10 @@ fetched by `source=()` with a checksum, or by a tag `makepkg` can verify.
 **R1** A pacman repository named `moarchy` is published for `aarch64`, with a
 `moarchy.db` at a stable URL.
 
-> This is the aarch64 half of the thing the README already measures as missing:
-> `pkgs.omarchy.org/stable/x86_64/omarchy.db` → 200,
-> `.../aarch64/omarchy.db` → 404.
+> This is the aarch64 half of the thing the README measures. Upstream now has
+> `pkgs.omarchy.org/stable/aarch64/omarchy.db` -> 200, but it is an app catalog
+> with no `omarchy` / `omarchy-config`, no keyring and an unsigned db, so the
+> base stack this repo carries is still missing upstream.
 
 **R2** It contains every package this project builds: the keyboard, the store,
 the AUR rebuilds, `moarchy`, `omarchy-config`, `moarchy-meta` and

@@ -64,13 +64,17 @@ covers the same ground.
 
 Two hard blockers, both verified rather than assumed.
 
-**1. Omarchy's package repo is x86_64-only.**
+**1. Omarchy's package repo has no usable aarch64 base.**
 
 ```
 https://pkgs.omarchy.org/stable/x86_64/omarchy.db  ->  200  (211 packages)
-https://pkgs.omarchy.org/stable/aarch64/omarchy.db ->  404
+https://pkgs.omarchy.org/stable/aarch64/omarchy.db ->  200  (34 packages, app catalog only)
 ```
 
+The aarch64 tree appeared after this was first measured, but it is an app
+catalog (browsers, editors, a few omarchy-branded apps) with no `omarchy`
+metapackage or `omarchy-config`, no keyring, and an unsigned database, so it
+does not carry the config/theme layer moarchy needs.
 `install/preflight/guard.sh` upstream also requires x86_64, limine, a btrfs root
 and vanilla-Arch markers — none of which hold on a phone.
 

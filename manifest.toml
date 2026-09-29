@@ -302,8 +302,9 @@ version = "0.7.1"
 
 # ---------------------------------------------------------------------------
 # AUR packages with no aarch64 binary anywhere -- neither in Arch Linux ARM nor
-# in Omarchy's own repo, which has no aarch64 tree at all
-# (pkgs.omarchy.org/stable/aarch64/omarchy.db -> 404).
+# in Omarchy's own repo, whose aarch64 tree is an app catalog that does not
+# carry these build deps (pkgs.omarchy.org/stable/aarch64/omarchy.db -> 200,
+# 34 packages, none of them yay / xdg-terminal-exec / etc.).
 #
 # This list is what docker/build-packages.sh builds. It used to be built a
 # second way -- install/build-src.sh, on the phone -- and adding a package here
