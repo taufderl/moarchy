@@ -29,6 +29,7 @@ and several were wrong for a reason that was not the obvious one.
 | [D12](#d12) | Hyprland drew a "started without start-hyprland" banner | **FIXED** |
 | [D25](#d25) | The Docker TUI soft-locked on raw pkexec in a terminal | **FIXED** |
 | [D27](#d27) | The on-screen keyboard did not work in the app drawer search | **FIXED** |
+| [D10](#d10) | The LPI pinctrl lost a boot race and took all audio with it | **FIXED** |
 
 ---
 
@@ -1460,3 +1461,104 @@ live keystroke, which cannot be done over SSH.
 URL bar, the Wi-Fi passphrase)? If yes, it is drawer-specific focus; if no, the
 OSK's key delivery to shell surfaces is broken everywhere. Pending that.
 
+## D10 — the LPI pinctrl loses a boot race and takes all audio with it {#d10}
+
+**Status: FIXED 2026-09-26 (`deferred_probe_timeout=60`), verified on hardware 2026-09-29.** Root cause pinned:
+the LPASS pinctrl (`33c0000.pinctrl`) can only probe once the ADSP has
+registered its clock services (~16.5 s+), and on a slow boot that slips past the
+kernel's deferred-probe window -- `CONFIG_DRIVER_DEFERRED_PROBE_TIMEOUT=10`
+(config:1662), 10 s. When it does, deferred probe gives up, the pinctrl and every
+consumer (both macros, both SoundWire controllers, the sound card) never probe,
+and audio is silently gone for the boot, not retried. Raising the window is the
+correct lever -- deferred probe already waits for the ADSP; it is just cut off
+early, and a longer window costs nothing on a normal boot (it only delays a
+genuinely unprobeable device).
+
+**Fix:** `deferred_probe_timeout=60` added to the kernel cmdline in
+`image/boot/android-bootimg.sh` (boot.img only, no kernel recompile; shared with
+sargo, harmless there). If ABL turns out to strip the param (only `console=` is
+known-stripped), the fallback is bumping `CONFIG_DRIVER_DEFERRED_PROBE_TIMEOUT`
+and rebuilding the kernel. **Reboot test** (~10-15 cold boots, the race is
+~1-in-8): confirm `/proc/cmdline` carries the param, `/proc/asound/cards` is
+non-empty every boot, and `33c0000.pinctrl`/`sound` never appear in
+`/sys/kernel/debug/devices_deferred`.
+
+The phone came up with **no sound card at all** — `/proc/asound/cards` said
+`--- no soundcards ---` — although all three DSPs were running and all sixteen
+audio modules were loaded. `devices_deferred` explains it:
+
+```
+33c0000.pinctrl
+3200000.codec      wait for supplier .../rx-swr-active-state
+3220000.codec      wait for supplier .../tx-swr-active-state
+3370000.codec      va_macro: unable to get macro clock
+sound              wait for supplier .../i2s1-sleep-state
+3230000.soundwire  supplier 3220000.codec not ready
+3210000.soundwire  supplier 3200000.codec not ready
+```
+
+One device failed to probe — the LPASS low-power-island pinctrl — and every
+consumer of its pin states stalled behind it: both macros, both SoundWire
+controllers and the card itself. The LPI pinctrl takes `LPASS_HW_MACRO_VOTE`
+and `LPASS_HW_DCODEC_VOTE` from `q6afecc`, which only exists once the ADSP's
+APR services have registered, so this looks like an ordering race that most
+boots win.
+
+A plain reboot fixed it completely: card present, both slaves `Attached`,
+nothing deferred.
+
+Worth knowing because the symptom is total and silent — no error, no failed
+unit, just no audio hardware. **If audio is missing, look at
+`/sys/kernel/debug/devices_deferred` before anything else.**
+
+Not yet established: how often it loses, and whether it is specific to a
+power-cycle from EDL (which is how this boot started) rather than an ordinary
+reboot.
+
+
+
+### Verified 2026-09-29
+
+Across every boot that completed in a reboot loop on the handset, the card came
+up: `/proc/asound/cards` non-empty, nothing audio-related in
+`/sys/kernel/debug/devices_deferred`, and `/proc/cmdline` still carrying
+`deferred_probe_timeout=60` (ABL does not strip it). Four consecutive reboots,
+4/4 clean. The 60 s window clears the ~27 s worst-case ADSP timing by a wide
+margin, so the race cannot expire the way it did at the 10 s default. (A longer
+stress loop hit the phone changing DHCP address and a scan-range bug in the test
+harness, not any audio regression.)
+
+### Reproduced 2026-09-23, with numbers
+
+Lost the race on one boot out of roughly eight while testing the microphone.
+Every audio node stayed in deferred probe:
+
+```
+[ 27.892414] platform 3200000.codec: deferred probe pending: platform: wait for supplier /soc@0/pinctrl@33c0000/rx-swr-active-state
+[ 27.904572] platform sound: deferred probe pending: platform: wait for supplier /soc@0/pinctrl@33c0000/i2s1-sleep-state
+[ 27.935801] platform 33c0000.pinctrl: deferred probe pending: (reason unknown)
+[ 27.943287] platform 3370000.codec: deferred probe pending: va_macro: unable to get macro clock
+```
+
+`/proc/asound/cards` reads `--- no soundcards ---`, and `amixer` answers
+`Invalid card number '0'`. Two facts worth recording:
+
+- **The timing.** The ADSP starts at `[16.5]` and the deferred-probe timeout
+  fires at `[27.9]`, about eleven seconds later. `33c0000.pinctrl` cannot
+  probe until the LPASS audio clocks exist, and those come from the ADSP. So
+  the window is real but narrow, which fits a race lost occasionally rather
+  than reliably.
+- **Reloading the driver does not fix it.** `modprobe -r
+  pinctrl_sm6350_lpass_lpi` followed by `modprobe` leaves the device unbound
+  and the card absent, so this is not simply "the module arrived late" --
+  once the deferred-probe timeout has expired the probe is not retried.
+
+That points at `deferred_probe_timeout=` on the kernel command line as the
+cheap mitigation, since this image sets no value and the default is what
+expires here. **Untested**: it needs a boot.img rebuild and a flash, and it
+should be measured rather than assumed, because a longer timeout delays every
+*genuine* probe failure by the same amount.
+
+A reboot clears it; the next boot came up normally and stayed that way.
+
+---
