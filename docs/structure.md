@@ -9,6 +9,13 @@ acceptance criteria are the contract to argue with before any of them is; where
 one is my reading rather than your decision it is marked **?**. Each AC below
 carries its state, and §11 has the per-milestone summary.
 
+**Override note (2026-09-29): the Sway port this file describes was removed; the
+fork runs Hyprland.** `port-4x.patch` no longer translates the compositor to
+Sway (it keeps `Quickshell.Hyprland` and hosts our plugins), the Hyprland config
+lives in `config/hypr/`, and the deleted Sway overlay (sway.conf, sway bindings,
+sway theme template) is gone. See the README's "Compositor and upstream
+divergence" section. Passages below that describe Sway as current are pre-Hyprland.
+
 The archaeology of how we got here lives in [build-log.md](build-log.md). This
 file is the destination.
 
@@ -203,8 +210,10 @@ and theme layer at the pin in `manifest.toml`'s `[omarchy]` (`c668141`, v4.0.4 �
 it lived in `install/vendor-omarchy.sh` until V3), installed to the path
 upstream hardcodes.
 
-**P3** The Hyprland→Sway translation that `install/port-4x.sh` performs at
-install time is applied at **build** time, in `omarchy-config`'s `prepare()`.
+**P3** `port-4x.patch` is applied at **build** time, in `omarchy-config`'s
+`prepare()`. It hosts moarchy's plugins in the vendored shell. It once also
+translated the compositor from Hyprland to Sway at build time; that half was
+removed when the fork moved to Hyprland.
 
 **P4** That translation is a checked-in `.patch` applied with `patch -p1`, not
 a script of `sed` expressions.
