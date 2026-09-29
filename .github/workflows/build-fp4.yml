@@ -108,7 +108,14 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.img.outputs.version_id }}
-          path: ${{ steps.img.outputs.dir }}
+          # The flash directory plus the two sidecars build-image.sh writes
+          # beside it (same set the release ships, minus the release-only
+          # tarball + its checksum). Multiple paths share images/ as the common
+          # root, so the artifact keeps the dir and the sidecars side by side.
+          path: |
+            ${{ steps.img.outputs.dir }}
+            ${{ steps.img.outputs.dir }}.build-info
+            ${{ steps.img.outputs.dir }}.packages
           retention-days: ${{ fromJSON(inputs.artifact_retention_days) }}
           if-no-files-found: error
 
