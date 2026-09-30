@@ -79,9 +79,17 @@ Highest long-term leverage, and **dragon-independent** — do it in parallel.
 
 ### B1. Upstream the enablement
 Every driver that lands in mainline + pmaports shrinks the kernel package and
-the maintenance surface **permanently**. In flight: the ST21NFCD RFC
-(`upstream/nfc-st21nfcd/`) and PR #9 to moarchy. Next: the audio drivers and
-the FP4 DT bits. This is the durable win and it waits on no one.
+the maintenance surface **permanently**. In flight: NFC pivoted from our
+standalone RFC (`upstream/nfc-st21nfcd/`, now superseded) onto Kristian Brox's
+st-nci raw-NCI series, brought up on the FP4 with three fixes sent to LKML and
+mirrored as [PR #14](https://github.com/sm6350-mainline/linux/pull/14); audio is
+[PR #11](https://github.com/sm6350-mainline/linux/pull/11) (mic DT) and
+[PR #12](https://github.com/sm6350-mainline/linux/pull/12) (aw88264 amp) with the
+use-case config moved to
+[sm6350-mainline/alsa-ucm-conf#2](https://github.com/sm6350-mainline/alsa-ucm-conf/pull/2);
+the FP4 DT camss supplies are
+[PR #15](https://github.com/sm6350-mainline/linux/pull/15). This is the durable
+win and it waits on no one.
 
 ### B2. Reproducible / CI image builds
 So a reflash is not a manual marathon and regressions are caught. The

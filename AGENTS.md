@@ -76,7 +76,11 @@ manifest.toml  every pin: kernel refs/commits, AUR versions, [omarchy] ref,
   The key is `~/.ssh/id_claude`, but this environment has no ssh-agent and does
   not offer it by default, so name it:
   `GIT_SSH_COMMAND="ssh -i ~/.ssh/id_claude -o IdentitiesOnly=yes" git push ...`
-  (authenticates as `@tadl`). Open MRs: !9640 (fp4 mic UCM), !9641 (WirePlumber).
+  (authenticates as `@tadl`). Open MRs: !9640 (fp4 mic UCM, **superseded by Luca
+  Weiss's !9653** which moves UCM to the `alsa-ucm-conf-qcom-sm6350` package;
+  close or leave), !9641 (WirePlumber). The UCM profile itself now lives upstream
+  at [sm6350-mainline/alsa-ucm-conf#2](https://github.com/sm6350-mainline/alsa-ucm-conf/pull/2),
+  not in the device package.
 
 ## The kernel is patch-free by design
 
@@ -86,7 +90,9 @@ scope has been exceeded"; the checksum ties it to pmaports' published sha512).
 So a kernel or DTS change is **not** made permanent by patching the package. The
 supported path is: land it upstream in `sm6350-mainline/linux` (the tree the pin
 tracks), then bump `manifest.toml`'s `kernel-ref`/`kernel-commit`. Open kernel
-PRs: #11 (fp4 mic DTS), #14 (fp4 NFC, ST21NFCD raw-NCI + fixes).
+PRs: #11 (fp4 mic DTS), #12 (aw88264 amp), #14 (fp4 NFC, st-nci raw-NCI + fixes),
+#15 (camss CSI PHY supply names). ALSA UCM lives in a separate repo:
+sm6350-mainline/alsa-ucm-conf#2 (fp4 mic + earpiece).
 
 ## Hardware testing (the FP4)
 

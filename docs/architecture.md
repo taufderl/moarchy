@@ -34,7 +34,7 @@ see [§ Where postmarketOS actually fits](#where-postmarketos-actually-fits).
 ├────────────────────────────────────────────────────────────────────┤ ▲ talks to
 │  KERNEL                      Linux 7.2, mainline + SoC enablement      │
 │  sm6350-mainline/linux · .config from pmaports (postmarketOS) ·       │
-│  [aw88264 amp · st21nfcd NFC · mic/call-audio DT — written here]      │
+│  [aw88264 amp · st-nci NFC · mic/call-audio DT — written here]        │
 ├────────────────────────────────────────────────────────────────────┤ ▲ loads
 │  FIRMWARE & SILICON          proprietary blobs on SM7225 (lagoon)     │
 │  FP4-firmware (FairBlobs) · pil-squasher · Snapdragon 750G (SM7225)   │
@@ -53,7 +53,7 @@ Items in `[brackets]` are built or patched in this project.
 | **linux-msm** | Qualcomm's upstream Linux team: modem/DSP plumbing every msm phone needs | `github.com/linux-msm` (qrtr, rmtfs, tqftpserv, qbootctl, pil-squasher) |
 | **Omarchy + moarchy** | The desktop identity (Omarchy) and its mobile port with the phone shell | `basecamp/omarchy` · `github.com/SimonSchubert` |
 | **Proprietary firmware** | Signed vendor blobs the SoC will not run without — not open, not replaceable | `FairBlobs/FP4-firmware` |
-| **Built / patched here** | Kernel drivers (audio, NFC), the NFC app, the location toggle, the FP4 device package | branch `fp4-claude`; upstream PRs #11/#12 and the ST21NFCD RFC |
+| **Built / patched here** | Kernel drivers (audio, NFC), the NFC app, the location toggle, the FP4 device package | branch `fp4-claude`; upstream PRs #11 (mic DT), #12 (aw88264 amp), #14 (NFC, st-nci raw-NCI + fixes), #15 (camss CSI PHY supplies) |
 
 Exact pins for all of these live in [`../manifest.toml`](../manifest.toml).
 

@@ -1055,6 +1055,19 @@ the start of its own substitution.
 **Status: FIXED 2026-09-24** — new kernel driver, prepared as an upstream RFC
 (`upstream/nfc-st21nfcd/`). NFC reads work; the moarchy.nfc app shows the tag.
 
+**Superseded upstream 2026-09-29.** The standalone `st21nfcd` driver was a means,
+not the goal: mainline already had `st-nci`, and Kristian Brox posted a v4 series
+adding a raw-NCI (`st,st21nfcd`) path to it. Bringing that v4 up on the FP4
+surfaced three bugs: the `0x90`->MIFARE mapping, a reference-clock restart on
+power-up (the controller wedges after a few poll on/off cycles otherwise, the
+same wedge Luca Weiss reported on FP5), and treating the idle `0x7e` read as
+no-data. Those three fixes were sent to Kristian's v4 thread on LKML
+([`20260902-fp5-st21nfcd-v4`](https://lore.kernel.org/all/20260902-fp5-st21nfcd-v4-v4-0-ded2f1c501be@proton.me/))
+and mirrored, with the FP4 `nfc@8` node, as
+[sm6350-mainline/linux#14](https://github.com/sm6350-mainline/linux/pull/14).
+Landing st-nci upstream retires our standalone driver entirely, so the permanent
+path is that PR, not carrying `upstream/nfc-st21nfcd/` forward.
+
 The wiki lists NFC as `N` and names an ST21NFCD. The starting assumption here
 was that mainline already had the driver and only a device-tree node was
 missing. That was wrong in an instructive way: mainline's ST NFC drivers are
