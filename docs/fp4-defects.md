@@ -303,13 +303,39 @@ Two ready ways to enable it (both need a kernel rebuild):
 
 1. **Config + DT node (cleaner):** set `CONFIG_PSTORE_RAM=y`, `_CONSOLE=y`,
    `_PMSG=y` (this `select`s `REED_SOLOMON*` via olddefconfig -- re-vendor the
-   resolved config to keep `prepare()`'s diff clean), and add a `ramoops@b0000000`
-   reserved-memory node (1 MiB, verified free -- between `dfps_data` end
-   `0xa2400000` and `removed_region 0xc0000000`) to the fp4 dts.
+   resolved config to keep `prepare()`'s diff clean), and add a ramoops
+   reserved-memory node to the fp4 dts. **The address matters: `0xb0000000` is
+   NOT usable (see the hardware test below), despite showing as System RAM in
+   `/proc/iomem`.**
 2. **Config + cmdline (no DT, fits the no-kernel-patch stance):** the same config
-   change, plus `memmap=0x100000$0xb0000000 ramoops.mem_address=0xb0000000
+   change, plus `memmap=0x100000$<addr> ramoops.mem_address=<addr>
    ramoops.mem_size=0x100000 ramoops.console_size=0x40000 ramoops.pmsg_size=0x40000
    ramoops.record_size=0x20000` on the cmdline (image/boot/android-bootimg.sh).
+
+**Tested on hardware 2026-09-30 (INCONCLUSIVE -- boot did not come up, cause not
+yet isolated).** Built the shipped commit `16337c9dd` with
+`PSTORE_RAM/_CONSOLE/_PMSG=y` (`kernelrelease` matches shipped, so on-disk modules
+load) plus a `ramoops@b0000000` DT node (1 MiB, no `no-map`), assembled a
+transient `boot.img` (`~/Personal/linux-ramoops-d11/`), and `fastboot boot`ed it
+twice. Neither came up: the first boot hung, the retry dropped into EDL ramdump
+(`05c6:900e`, recovered with `scripts/edl-reset.py`).
+
+**Do not over-read this.** Two *different* failure modes from one image (hang,
+then ramdump) is the signature of the known flaky transient boot (D26 spends a
+slot retry), not of a deterministic memory fault. And the address is almost
+certainly fine: the FP4 **downstream** DT (`lagoon.dtsi` `reserved_memory`) marks
+every protected carveout as an explicit `no-map removed-dma-pool` (hyp, xbl,
+smem, all the pil_* firmware regions, `removed_region@c0000000`, the display
+regions up to `dfps_data@a2300000+0x100000`), and **nothing reserves
+`0xb0000000`** -- it is plain HLOS System RAM in both the downstream map and
+mainline `/proc/iomem`. So the 2026-09-26 "verified free" note still looks right;
+the ramoops node did not obviously crash anything.
+
+**Next (isolation, not a new address):** re-boot the SAME kernel with the ramoops
+node REMOVED. If it comes up cleanly, the two failures were flaky transient boots
+and `0xb0000000` is usable (just retry the ramoops boot until it takes). If it
+also fails, the fault is the `PSTORE_RAM` build or the transient method, not the
+address. The build and the transient-boot workflow are otherwise proven.
 
 **Why it is documented and not applied:** the config change requires a kernel
 rebuild this environment can't verify (a bad config fails the build), the DT node
@@ -548,13 +574,32 @@ kernel-delivery wall as D11/D23 (the kernel package is upstream-tag, config-only
 no patch step). Cosmetic and not user-visible beyond a rare dropped touch, so it
 stays low priority behind the kernel-delivery decision.
 
+**Tested 2026-09-30: the drop-dmas approach is disproven; not DT-fixable.**
+Deleting `dmas`/`dma-names` on `&i2c8` does NOT fall back to FIFO here. The geni
+i2c driver uses GPI DMA precisely when the SE has FIFO disabled in firmware
+(`fifo_disable`, read from the read-only `GENI_IF_DISABLE_RO` register); for this
+SE that bit is set, so `setup_gpi_dma()` is mandatory. With the dmas removed the
+bus fails probe (`geni_i2c 988000.i2c: error -ENODEV: Failed to get tx DMA ch`),
+which takes the touchscreen with it (`hx83112a_probe` backtrace, no input
+device). The FIFO path the driver has is gated on that hardware bit, which no DT
+change flips. So the GPI-DMA flakiness needs a lower-level fix (GPI DMA driver or
+SE firmware), not a device-tree switch. Leave D22 as-is; the driver's retries
+absorb it.
+
 ---
 
 ## D23 — the camera's CSI PHY supplies are undescribed, and a clock sticks on {#d23}
 
-**Status: the regulator half now has the data — UPDATED 2026-09-24 from
-Fairphone's own board device tree.** Two separate items, neither with a
-user-visible symptom.
+**Status: CSI PHY supplies FIXED 2026-09-30 (sm6350-mainline/linux PR #15),
+verified on hardware; the stuck AXI clock remains (an upstream driver issue,
+below). The regulator data was UPDATED 2026-09-24 from Fairphone's own board
+device tree.** Two separate items, neither with a user-visible symptom.
+
+**Verified 2026-09-30.** The supply-name fix (below) booted on the handset
+(7.2.0-dtstest): camss probes, /dev/video0..12 appear, and dmesg shows **zero**
+"using dummy regulator" lines for csiphy (was 8). Sent upstream as PR #15;
+permanence follows the same upstream-then-pin path as the NFC/mic work. The
+stuck AXI clock is unaffected by this and stays open.
 
 **The CSI PHY supplies.** Every CSI PHY rail falls back to a dummy regulator at
 probe:
