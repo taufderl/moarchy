@@ -38,6 +38,15 @@
 #                Moves the volume, mutes and unmutes, and blanks the screen
 #                once; the sink is put back on any exit. V8-V10 need the touch
 #                injector and root and skip without them.
+#
+# STATUS (2026-09-30): this harness is Sway-era. It drives `swaymsg` throughout
+# and so does NOT run on the Hyprland session yet (swaymsg is not installed
+# there); a swaymsg -> hyprctl port is still to do. It also references
+# `moarchy-one-app-per-workspace`, which has been RETIRED: Hyprland places one
+# app per workspace declaratively via the `workspace emptynm` window rule in
+# hypr/windows.lua, so the daemon and its `--free` helper no longer exist. The
+# checks that assumed a running daemon (the startup probe and the window checks
+# that call `--free`) need rewriting to assert the rule's effect when ported.
 
 set -uo pipefail
 
