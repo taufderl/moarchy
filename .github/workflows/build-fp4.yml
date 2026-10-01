@@ -38,6 +38,10 @@ on:
         description: "How many days to keep the workflow artifact"
         type: string
         default: "14"
+      debug_kernel:
+        description: "Build the DEBUG kernel variant (merges config.debug: soc sleep-stats, PM/suspend debug). For investigation, NOT daily use; names the artifact/release -debug."
+        type: boolean
+        default: false
 
 # One build at a time; a second manual run waits for the first rather than
 # cancelling it (killing a long in-flight build would waste the work).
@@ -55,6 +59,8 @@ jobs:
     env:
       DEVICE: fp4
       DEVICES: fp4            # build only the FP4 device packages, not sargo's
+      # provision.sh passes this into the kernel build; 1 merges config.debug.
+      MOARCHY_KERNEL_DEBUG: ${{ inputs.debug_kernel && '1' || '0' }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7
@@ -99,6 +105,9 @@ jobs:
           # artifact and any release name the exact commit unambiguously and
           # match each other. e.g. moarchy-fp4-0.5.0-20260925-9b8af81
           VERSION_ID="${NAME}-${GITHUB_SHA::7}"
+          # Mark the debug variant unmistakably in the artifact/release identity
+          # (the kernel inside also carries a -debug uname from config.debug).
+          [ "${MOARCHY_KERNEL_DEBUG:-0}" = 1 ] && VERSION_ID="${VERSION_ID}-debug"
           echo "dir=$IMG"              >> "$GITHUB_OUTPUT"
           echo "name=$NAME"            >> "$GITHUB_OUTPUT"
           echo "version_id=$VERSION_ID" >> "$GITHUB_OUTPUT"

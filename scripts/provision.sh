@@ -127,6 +127,7 @@ step_build() {
     -v "$PWD/packages:/out" \
     -e "COMMIT=$_commit" -e "DIRTY=$_dirty" -e "REBUILD=${REBUILD:-0}" \
     -e "DEVICES=${DEVICES:-}" \
+    -e "MOARCHY_KERNEL_DEBUG=${MOARCHY_KERNEL_DEBUG:-0}" \
     moarchy-builder
   info "built: $(ls -1 packages/*.pkg.tar.* 2>/dev/null | wc -l | tr -d ' ') packages"
   info "  (the components, the AUR rebuilds, and pkgbuilds/: moarchy,"

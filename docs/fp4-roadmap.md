@@ -94,6 +94,18 @@ win and it waits on no one.
 ### B2. Reproducible / CI image builds
 So a reflash is not a manual marathon and regressions are caught. The
 build/flash/verify pipeline exists; make it repeatable and, ideally, automated.
+A manual-trigger **debug kernel** variant now exists (`debug_kernel` input on the
+FP4 build workflow, merging `config.debug`); see B3.
+
+### B3. Harden / slim the release kernel
+Now that debug instrumentation has a home in the `-debug` variant, the daily
+release kernel should **shed it** - it currently still carries things that cost
+battery, performance, size and attack surface in normal use (e.g. `FTRACE` /
+`FUNCTION_TRACER` / `FUNCTION_GRAPH_TRACER`, `QCOM_STATS`, `DEBUG_INFO*`/`BTF`,
+`*_DEBUG` leftovers). Audit the vendored config, move the debug-only symbols into
+`config.debug`, and disable them in the release build; measure the battery, boot
+and image-size delta. Keep it config-only (no patches), same as the rest of the
+kernel package. Ties into A1 (battery) and the D29 suspend work.
 
 ## Track C — UX polish: where "runs Omarchy fine" actually lives
 

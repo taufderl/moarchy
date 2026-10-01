@@ -153,14 +153,16 @@ _srcdir="linux-$pkgver-sm6350"
 # manifest.toml still records kernel-commit beside kernel-ref, so if the limit
 # returns this is a two-line change and the pin is already resolved.
 source=("linux-$_tag.tar.gz::$_url/archive/$_tag/linux-$_tag.tar.gz"
-        'config')
+        'config'
+        'config.debug')
 # The config hash is real and IS computed here, because the vendored file is
 # not upstream's -- it is upstream's with SECURITY_LANDLOCK flipped. Upstream's
 # own sha512 was checked against the fetched copy BEFORE that edit and matched
 # (e20a5b49...51631), which is what makes the vendored file traceable to
 # pmaports even though this package no longer downloads anything from them.
 sha512sums=('2247377b260eba48a3bc2840fe8a55cec82c391949b59dc83093af27cdec66245efb8f3c7fc4e105fa8b1da090335cacad8bcc6cfa128dd25ff7b473297f2530'
-            '5ca59a057386d8cf18cfeffa0db0b17a169b814c9e2864e77274861b9e173b7fb2d84238db26dd537a652eeee2233c10b49f73e0e1ed7236c1adc10ae39a96fe')
+            '5ca59a057386d8cf18cfeffa0db0b17a169b814c9e2864e77274861b9e173b7fb2d84238db26dd537a652eeee2233c10b49f73e0e1ed7236c1adc10ae39a96fe'
+            '2ae75b0c62247abfca811d2c3ce1ae94f5b2dbadcd486f7936b050b7ec36dc3737db09acf63e60e1123eb1e3261faca515ca6d20448852f4311039d002661976')
 
 # Do not build this on a case-insensitive filesystem -- the kernel carries both
 # net/netfilter/xt_TCPMSS.c and xt_tcpmss.c, and APFS keeps one of them. The
@@ -178,6 +180,16 @@ prepare() {
   fi
 
   cp "$srcdir/config" .config
+
+  # Optional debug variant. MOARCHY_KERNEL_DEBUG=1 (set by the FP4 build
+  # workflow's `debug_kernel` input) merges config.debug on top of the vendored
+  # config, adding debug/instrumentation symbols and a -debug localversion. Off
+  # by default, so a normal build never touches the fragment and stays identical.
+  if [ "${MOARCHY_KERNEL_DEBUG:-0}" = 1 ]; then
+    echo "==> DEBUG kernel: merging config.debug onto the vendored config"
+    ARCH=arm64 ./scripts/kconfig/merge_config.sh -m -O . .config "$srcdir/config.debug"
+  fi
+
   # Non-interactive by construction: a .config that does not answer every
   # symbol this tree asks about makes `make` prompt on stdin, and in a
   # container with no tty that hangs rather than fails. LLVM=1 here too, or
@@ -185,7 +197,9 @@ prepare() {
   # SHADOW_CALL_STACK) against GCC and silently turns them off -- which would
   # produce a kernel that builds and is not the audited one.
   make ARCH=arm64 LLVM=1 olddefconfig
-  if ! diff -q "$srcdir/config" .config >/dev/null; then
+  # The audited release config must not drift silently. For the debug variant the
+  # fragment IS the intended drift, so only guard the release build.
+  if [ "${MOARCHY_KERNEL_DEBUG:-0}" != 1 ] && ! diff -q "$srcdir/config" .config >/dev/null; then
     echo "==> NOTE: olddefconfig changed the config; the audited file is not what builds:"
     diff "$srcdir/config" .config | head -40 || true
   fi
