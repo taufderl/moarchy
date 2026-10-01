@@ -99,6 +99,16 @@ build/flash/verify pipeline exists; make it repeatable and, ideally, automated.
 
 After trust. This is the touch-ergonomics layer.
 
+- **First-launch wizard** — a fresh flash currently drops you into a phone you
+  cannot get into: userdata is wiped, so there is no account password (the
+  lock-screen PIN is rejected because the account is locked), sshd boots
+  `inactive`, and WiFi has no saved network. Today the only way back in is the
+  `/dev/ttyACM0` serial shell (set a password with `chpasswd`, start sshd,
+  connect WiFi). A first-boot wizard should provision these on the device
+  itself: set the screen PIN/password, join a WiFi network, and enable ssh, so a
+  reflash does not require a cable. This is the on-device counterpart to the
+  reflash-recovery pain in [A3](#a3-reboot-recovery-reliability-d11) / the CI
+  image work in [B2](#b2-reproducible-ci-image-builds).
 - **OSK reliability** — the app-drawer keyboard still does not type (D27).
 - **Lock screen hardening** — failed-attempt backoff before the PIN is real
   security.

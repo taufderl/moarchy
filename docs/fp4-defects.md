@@ -24,6 +24,7 @@ configuring. `WONTFIX` — understood and deliberately left.
 | [D21](#d21) | Bluetooth carries music but not call audio | **OPEN** |
 | [D22](#d22) | The touchscreen controller logs recurring i2c failures | **OPEN** |
 | [D23](#d23) | The camera's CSI PHY supplies are undescribed, and a clock sticks on | **OPEN** |
+| [D29](#d29) | s2idle enters but does not stay asleep (cx/mx never drop) | **OPEN (A1 blocker)** |
 
 ---
 
@@ -693,7 +694,10 @@ it is not fixed by anything in this tree.
 
 ## D28 — the phone never suspends on idle; it only blanks the screen {#d28}
 
-**Status: FIXED 2026-09-27, s2idle drain measured (~1 %/h, ~7x better than
+**Status: REOPENED 2026-10-01 as D29 (s2idle does not hold). The wiring below is
+correct; the deeper problem is that s2idle never stays asleep.** See [D29](#d29).
+
+**Status (2026-09-27): FIXED, s2idle drain measured (~1 %/h, ~7x better than
 screen-blank); pending only the pkgrel-13 reflash to put the same config on the
 phone.** The idle->suspend wiring
 (steps 1-2) was done 2026-09-26. Two follow-up overnight watches saw zero
@@ -839,3 +843,69 @@ two-stage config -- the change landed after that build started. Rebuild the imag
 (moarchy is now pkgrel 13) before/with tomorrow's reflash. After reflash, the
 valid confirmation is simply: boot, leave the phone idle and unplugged, and watch
 `suspend_success` climb -- do NOT relaunch swayidle over ssh (it would be denied).
+
+## D29 -- s2idle enters but does not stay asleep {#d29}
+
+**Status: OPEN (found 2026-10-01, on the flashed 0.5.0 public build).** The
+suspend path works but the SoC never stays in s2idle: it enters and exits in
+~0.5-1.5 s every time. This is why battery is `P` and why D28's overnight figures
+do not reproduce. It is a local/runtime problem, NOT an upstream gap.
+
+**Measured** (over ssh):
+
+| trigger | conditions | s2idle held |
+| --- | --- | --- |
+| `echo mem` | on USB | ~2 s |
+| `echo mem` | unplugged | <1 s |
+| `systemctl suspend` (root) | WiFi off | 0.47 s |
+| `echo mem` | screen blanked + WiFi off | 1.45 s |
+
+`suspend_stats/success` increments each time, but `pm_wakeup_irq` is empty and no
+registered wakeup source increments -- not a clean wakeup-source wake. During the
+frozen window the churn is IPI + `arch_timer` + `apps_rsc` (the RPMh RSC) + geni
+`gpi-dma`/UART.
+
+**Ruled out** (with evidence): USB charger/typec, WiFi (D5 power-save-off is a red
+herring here), the display, phantom touch input (D22 -- input quiet, touch IRQ
+flat), the stay-awake flag, blocking sleep inhibitors, active audio, and broken
+idle-notify (a probe swayidle fires at its timeout, so Hyprland delivers idle).
+
+**Upstream supports deep sleep on this SoC.** SM6350/SM7225 (pre-Hamoa Qualcomm)
+reaches s2ram-equivalent depth *through* s2idle + RPMh; a Jan-2026 lkml RFC
+("soc: qcom: rpmh-rsc: Register s2idle_ops...") assumes these targets hit s2ram
+depth in s2idle (it only fixes NVMe context loss; the FP4 has UFS, so it does not
+apply). `sm6350.dtsi` is fully wired: `cluster_pd` references `cluster_aoss_sleep`
+(`arm,psci-suspend-param = <0x4100b244>`), the deepest AOSS cluster idle state.
+
+**Peripheral-hold hypothesis RULED OUT by elimination (2026-10-01).** `cx`/`mx`
+sit "on" at perf 256, but stopping the likely holders one by one and cumulatively
+did **not** change the ~1 s exit: USB autosuspend 0.9 s, +BT off 0.9 s, +cdsp+adsp
+stopped 0.9 s, +modem stopped 1.0 s (baseline 1.4 s). So no peripheral subsystem
+(USB, Bluetooth, the adsp/cdsp/modem remoteprocs) is what pulls it out of s2idle.
+
+**So it is kernel-internal:** the s2idle loop exits in ~1 s with no registered
+wakeup source and empty `pm_wakeup_irq`, independent of every peripheral.
+
+**CONFIRMED via `qcom_stats` on the PRODUCTION kernel (2026-10-01) - no debug
+kernel needed.** `CONFIG_QCOM_STATS=m` ships in the stock config; `sudo modprobe
+qcom_stats` exposes `/sys/kernel/debug/qcom_stats/`. The deep-sleep counters are
+all zero since boot (uptime 56 min): `aosd` (AOSS) Count 0, `cxsd` (CX collapse)
+Count 0, `ddr` (self-refresh) Count 0. So the SoC has **never once reached
+system-wide deep sleep** - that is the whole defect, measured directly.
+`power-domain-cpu-cluster0` is "on" (never power-collapses).
+
+**Cause narrowed to clocks holding `cx` (not a wakeup).** With the screen blanked
+(`dpms` off) the **display MDP clock is still running** -
+`disp_cc_mdss_mdp_clk` 200 MHz, `gcc_disp_axi_clk`, `gcc_disp_gpll0_clk` 600 MHz -
+so the display power domain and `cx` stay up and `cxsd` can never happen. USB AXI
+clocks (200 MHz) and UFS are also up but USB is a plug-in artifact. `gcc_camera_axi_clk`
+is OFF here, so D23 is NOT the current holder. **Leading lead: the display
+pipeline does not release its clocks on blank/idle** (the compositor keeps the
+output active, or the display suspend path does not stop MDP), pinning `cx`.
+
+**Next step (on the production kernel, no reflash):** confirm the display is the
+holder - force the DRM output fully off / stop the compositor's repaint, watch
+`disp_cc_mdss_mdp_clk` drop, then suspend unplugged and check `cxsd`/`aosd` move.
+If the display is it, the fix is in the DPMS/display-suspend path (compositor
+releasing the output, or the mdss driver), not a kernel PM core change. ftrace
+(`FUNCTION_TRACER=y` in prod) is available for the suspend path if needed.
