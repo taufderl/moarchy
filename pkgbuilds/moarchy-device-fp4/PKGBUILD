@@ -74,7 +74,7 @@ pkgver=$_ver
 # qcom-camss has no autofocus actuator, so the main's lens is stuck at rest
 # focus, while the ultra-wide is fixed-focus and sharp. Config comment records
 # the finding so it is not re-tried blind. See docs/fp4-fixes.md D6.
-pkgrel=4
+pkgrel=5
 pkgdesc="Fairphone 4 (fp4) hardware support for moarchy"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
@@ -144,9 +144,10 @@ source=('hypr-device.lua' 'device.conf'
         'hexagonrpcd-sensors-root.conf' 'megapixels-fp4.conf'
         '53-fp4-ucm.conf' 'moarchy-fp4-mic-route.service'
         'fp4-audio-route.sh' 'q6voiced.conf'
-        'wifi-powersave.conf')
+        'wifi-powersave.conf'
+        '82-fp4-serial-wakeup.rules')
 sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
-            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 package() {
   install -Dm644 "$srcdir/device.conf" "$pkgdir/usr/share/moarchy/device/device.conf"
@@ -227,6 +228,14 @@ package() {
   # soldered in, it costs 156 bytes, and having it already right is what makes
   # packaging hexagonrpcd later a one-package change rather than two.
   install -Dm644 "$srcdir/81-libssc-fairphone-fp4.rules" \
+    -t "$pkgdir/usr/lib/udev/rules.d"
+
+  # D29: disable the serial debug console's RX wakeup. Its armed wakeup IRQ
+  # (884000.serial:wakeup, msmgpio 64) fires the instant s2idle idles the CPUs and
+  # aborts every system suspend in ~2s. The debug console does not need to wake the
+  # phone; disabling its wakeup lets s2idle hold (verified: echo mem holds to its rtc
+  # alarm instead of exiting in ~1.3s). See docs/fp4-defects.md D29.
+  install -Dm644 "$srcdir/82-fp4-serial-wakeup.rules" \
     -t "$pkgdir/usr/lib/udev/rules.d"
 
   # --- a way to read a phone that will not say why -------------------------
