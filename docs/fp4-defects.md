@@ -24,7 +24,7 @@ configuring. `WONTFIX` — understood and deliberately left.
 | [D21](#d21) | Bluetooth carries music but not call audio | **OPEN** |
 | [D22](#d22) | The touchscreen controller logs recurring i2c failures | **OPEN** |
 | [D23](#d23) | The camera's CSI PHY supplies are undescribed, and a clock sticks on | **OPEN** |
-| [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). FIXED (udev rule, holds 21s); cx/OPP depth cap still open (secondary) | **FIXED (primary); depth open** |
+| [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). udev stopgap holds 21s; real fix = test Talari's in-flight qcom-geni force-suspend patch (fixes abort + depth) | **stopgap shipped; upstream fix in flight** |
 
 ---
 
@@ -1033,14 +1033,31 @@ DRIVER=="qcom_geni_serial", ATTR{power/wakeup}="disabled"` (installed to
 udev path 2026-10-02** (not just a manual echo): rule installed -> `udevadm
 control --reload` + `trigger` flips `884000.serial/power/wakeup` `enabled`->`disabled`
 -> `echo mem` **held 21 s** to its rtc alarm (was ~1.3 s). Ships in the next image;
-no kernel change needed. A cleaner long-term form is kernel/DT not arming the console
-UART RX as a system-wakeup source.
+no kernel change needed. This is the local stopgap - see the upstream fix below.
 
-**Still open (secondary, depth):** even with the abort fixed and s2idle holding 21 s,
-`aosd`/`cxsd`/`ddr` stay 0 - the SoC holds in s2idle but does not reach the
-RPMh-tracked deep collapse, capped by the console's `cx`/OPP vote (the earlier
-finding, correctly placed). Next: let the console port runtime-suspend / drop its OPP
-vote during s2idle, then confirm `cxsd`/`aosd` increment after a real `echo mem`.
-`/dev/ttyACM0` (the `ttyGS0` USB-gadget console) remains the out-of-band lifeline.
-Also still open and separate: the compositor does not reliably keep the panel
-dpms-off.
+**Both D29 layers are one kernel bug, and the upstream fix is already in flight.**
+The spurious wake (irq 172) and the depth cap (`cx`/OPP not dropping) have the same
+cause: a geni UART kept runtime-active (a console) never runs its runtime-suspend
+callback during *system* suspend, so `geni_se_resources_off()` is never called -
+and that one function is what applies the **sleep pinctrl** (RX `bias-pull-up`,
+which the FP4 DT `qup_uart1_sleep_rx` ships specifically "to avoid ... spurious
+wakeups") **and** drops the **OPP/`cx` vote** (`dev_pm_opp_set_rate(dev, 0)`).
+`qcom_geni_serial_suspend()` only re-tags the interconnect; it does not deactivate
+resources. **Upstream patch (under review, NOT merged):** "serial: qcom-geni: add
+force suspend/resume to system sleep callbacks", Praveen Talari (Qualcomm), 2026-07
+- calls `pm_runtime_force_suspend()` in suspend / `pm_runtime_force_resume()` in
+resume, which invokes the runtime callback (hence `resources_off`: sleep pinctrl +
+OPP drop) during system sleep. It skips only when `no_console_suspend` is set; FP4
+does not set that, so it should fix **both** layers for us. Its stated motivation
+("resources ... not gated ... prevents the platform from reaching its lowest idle
+state") is exactly this defect.
+
+**Recommendation (do NOT write a duplicate patch - [[search-lore-before-writing-driver]]):**
+cherry-pick Talari's patch onto the sm6350 kernel, test on FP4 that `echo mem` holds
+*and* `qcom_stats` `cxsd`/`aosd` increment, and report a `Tested-by:` on the list -
+device-specific validation of an in-flight patch is the useful contribution here, and
+it replaces the udev stopgap with the real fix (then drop the rule). Related
+in-flight patches to fold in: the `no_console_suspend` rebalance follow-up (Abel
+Vesa) and the wakeup-irq error-path cleanup. Test attended (suspend) with
+`/dev/ttyACM0` as the lifeline. Also still open and separate: the compositor does
+not reliably keep the panel dpms-off.
