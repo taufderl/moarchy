@@ -24,7 +24,7 @@ configuring. `WONTFIX` — understood and deliberately left.
 | [D21](#d21) | Bluetooth carries music but not call audio | **OPEN** |
 | [D22](#d22) | The touchscreen controller logs recurring i2c failures | **OPEN** |
 | [D23](#d23) | The camera's CSI PHY supplies are undescribed, and a clock sticks on | **OPEN** |
-| [D29](#d29) | s2idle enters but does not stay asleep (cx/mx never drop) | **OPEN (A1 blocker)** |
+| [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). FIXED (udev rule, holds 21s); cx/OPP depth cap still open (secondary) | **FIXED (primary); depth open** |
 
 ---
 
@@ -758,7 +758,7 @@ idle power. That is the battery finding.
    call/audio (sink/source streams, sleep inhibitors). Shipped by moarchy pkgrel 9.
    Verified on hardware: `moarchy-idle-suspend` suspended to s2idle
    (`suspend_success` incremented, clean resume), and a **single** power-button
-   press woke it to the PIN pad, which 1337 unlocked.
+   press woke it to the PIN pad, which the PIN unlocked.
 
    **Also fixed a double-press bug found during this test.** Idle-off used to run
    `moarchy-screen blank`, which blanks WITHOUT setting the lock flag (so touch
@@ -894,18 +894,153 @@ Count 0, `ddr` (self-refresh) Count 0. So the SoC has **never once reached
 system-wide deep sleep** - that is the whole defect, measured directly.
 `power-domain-cpu-cluster0` is "on" (never power-collapses).
 
-**Cause narrowed to clocks holding `cx` (not a wakeup).** With the screen blanked
-(`dpms` off) the **display MDP clock is still running** -
-`disp_cc_mdss_mdp_clk` 200 MHz, `gcc_disp_axi_clk`, `gcc_disp_gpll0_clk` 600 MHz -
-so the display power domain and `cx` stay up and `cxsd` can never happen. USB AXI
-clocks (200 MHz) and UFS are also up but USB is a plug-in artifact. `gcc_camera_axi_clk`
-is OFF here, so D23 is NOT the current holder. **Leading lead: the display
-pipeline does not release its clocks on blank/idle** (the compositor keeps the
-output active, or the display suspend path does not stop MDP), pinning `cx`.
+**Holder of `cx` NOT yet pinned (two earlier conclusions retracted - see below).**
+Verified by controlled tests (2026-10-01, prod kernel): with the phone **unplugged
+AND the display genuinely idle** (`dpms` off, `disp_cc_mdss_mdp_clk` enable_count
+= 0, zero atomic commits in a 6 s passive ftrace), **`cx`/`mx` are still pinned at
+perf 256 and a real `echo mem` still never deep-sleeps** (`aosd`/`cxsd`/`ddr`
+stay 0). So the deep-sleep blocker is a continuous `cx` NOMINAL vote from a
+subsystem that none of the black-box toggles released.
 
-**Next step (on the production kernel, no reflash):** confirm the display is the
-holder - force the DRM output fully off / stop the compositor's repaint, watch
-`disp_cc_mdss_mdp_clk` drop, then suspend unplugged and check `cxsd`/`aosd` move.
-If the display is it, the fix is in the DPMS/display-suspend path (compositor
-releasing the output, or the mdss driver), not a kernel PM core change. ftrace
-(`FUNCTION_TRACER=y` in prod) is available for the suspend path if needed.
+**Ruled out as the holder (by controlled test):**
+- **Display / MDP clock.** ftrace shows the kernel DOES release the mdss clocks
+  when the compositor is idle (`clk_bulk_disable` via `mdss_runtime_resume`'s
+  counterpart; enable_count 0 at idle). The clock is only on while Hyprland is
+  committing frames. `cx` stays 256 even with it fully off. (This retracts the
+  earlier "MDP clock leak on dpms-off" conclusion, which was taken while the
+  screen had bounced back ON - a `dpms("off")` request itself triggers a commit
+  that re-enables the panel, which is a *separate* compositor bug: dpms-off does
+  not stick.)
+- **USB cable** (unplugged, `cx` still 256) and the **dwc3 controller** (unbound
+  `a600000.usb`, USB master clock and `cx` unchanged).
+- **modem / adsp / cdsp / Bluetooth** (stopped individually + cumulatively
+  earlier; no change - though that run was screen-on-confounded).
+- Display-clock-leak upstream fixes do not apply anyway: the 2020 DPU
+  system-suspend fix is already in our kernel; the 2026-07 dual-MDSS-PD series is
+  SM8750-only; no cont_splash/simplefb here.
+
+**Process note / two retractions.** D29's cause was mis-called twice from
+*confounded single readings*: first "`0xb0000000` crashes the SoC" (really flaky
+transient boots), then "MDP clock leak holds cx" (readings taken with the screen
+bounced back on). Lesson: control BOTH confounds (unplugged + display-idle) and
+trace the actual `cx` perf-state vote before concluding.
+
+**cx consumer NAMED (2026-10-01, prod kernel, `pm_genpd_summary`).** Reading
+`/sys/kernel/debug/pm_genpd/pm_genpd_summary` with the phone unplugged + idle, the
+`cx` domain lists exactly one consumer voting the NOMINAL corner:
+
+```
+cx                              on                              256
+    884000.serial                   active                      256   SW
+    ae01000.display-controller      active                      64    SW
+    8804000.mmc                     suspended                   0     SW
+    genpd:0:4080000.remoteproc      suspended                   0     SW
+```
+
+`884000.serial` is `ttyMSM0` (the geni QUP UART). It is **runtime-active for
+essentially all of uptime** (`power/runtime_active_time` 22,563 s vs
+`runtime_suspended_time` 15 s over a 6 h boot) and votes `cx` perf 256. The
+display-controller only votes 64, so even a fully idle display leaves `cx` pinned
+at 256 by the serial port - which is exactly why every display/MDP test above left
+`cx` at 256. **The serial port is the dominant `cx` holder.**
+
+Two things keep `ttyMSM0` active: (1) it is a registered kernel console (`EC` in
+`/proc/consoles`; no explicit `console=` in `/proc/cmdline`, so it comes from the
+DTB `chosen`/default), and (2) moarchy runs `serial-getty@ttyMSM0.service`
+(`agetty` on it since boot). **The instrumented test below shows only (1) matters -
+the getty is NOT the holder.**
+
+**Driver mechanism (source-confirmed, `qcom_geni_serial.c` @ v7.2.0-sm6350).** The
+`cx` vote is an **OPP vote**: `geni_serial_set_rate`/`geni_serial_resources_on`
+call `dev_pm_opp_set_rate(uport->dev, clk_rate)` (and `dev_pm_opp_set_level` by
+baud), which requests the `cx` corner. It is dropped in exactly one place -
+`geni_serial_resources_off()` calls `dev_pm_opp_set_rate(uport->dev, 0)` - and that
+runs **only** from `qcom_geni_serial_runtime_suspend` (`SET_RUNTIME_PM_OPS`).
+Runtime suspend only fires when the port is idle; the **console role** keeps the
+port in use, so `runtime_suspend` never runs and the OPP/`cx` vote never falls
+(matches the live `runtime_active_time` ≈ full uptime).
+
+**Instrumented test 2026-10-02 (self-healing probe, `qcom_stats` + ftrace). This
+REFUTES the earlier "getty is the holder / dropping
+it hangs the box / deep-idle slowdown" write-ups - all three were wrong.** The
+probe stopped `serial-getty@ttyMSM0` *and* `pkill`ed `agetty`, waited 14 s, then
+ran `echo mem` with a +12 s rtc wakealarm, tracing throughout, then auto-restored.
+
+- **Phase B (getty stopped + agetty killed, +14 s): `cx` still 256,
+  `884000.serial` still `active`.** Its `runtime_active_time` rose by the full
+  ~14,860 ms while `runtime_suspended_time` did **not** move (stayed 15,470 ms) -
+  the port was runtime-active the entire 14 s. **So killing the getty does nothing
+  to the pin; the registered-console role holds the port active on its own.**
+- **Phase C (`echo mem`, rtc +12 s): returned in ~1.98 s, not 12 s** - the D29
+  early-exit - and `aosd`/`cxsd`/`ddr` stayed **0**. s2idle still never reaches
+  deep sleep, and it exits in ~2 s *independently of the cx pin*.
+- **The earlier "userspace hang / deep-idle slowdown" was a measurement artifact:**
+  the `qcom_stats` counters prove the SoC never deep-slept, so the ~90 s sluggishness
+  was not deep idle. The likely cause is the **function tracer** on
+  `dev_pm_opp_set_rate`/`_genpd_set_performance_state` - those fire on every
+  clock/perf change system-wide, so tracing them crawls everything; the system
+  recovered exactly when restore set `current_tracer=nop`. The phone was never
+  wedged and never needed a reboot (it was not rebooted; it is up 1h56m).
+
+**ROOT CAUSE CONFIRMED (2026-10-02, instrumented, two independent confirmations).**
+The ~2 s exit is an **armed wakeup IRQ firing the instant s2idle idles the CPUs**.
+Traced via the `suspend_resume` tracepoint: the abort happens between
+`dpm_suspend_late` end and the `dpm_suspend_noirq`/resume turnaround (no
+`machine_suspend`/idle-loop time at all - s2idle never enters). A `func_stack_trace`
+on `pm_system_irq_wakeup` caught the single call, from
+`irq_pm_handle_wakeup <- handle_fasteoi_irq <- gic_handle_irq <- cpuidle_enter`,
+and a kprobe on its argument named the IRQ:
+
+```
+irq=172   ->   172:  msmgpio  64  Edge  884000.serial:wakeup
+```
+
+**IRQ 172 is the serial console's RX wakeup GPIO (`884000.serial` = `ttyMSM0`, the
+geni debug UART, routed through `msmgpio` GPIO 64).** It is armed as a wakeup during
+`suspend_device_irqs` and fires immediately, so `irq_pm_handle_wakeup` sets
+`pm_abort_suspend`, `pm_wakeup_pending()` is true at the post-noirq check, and the
+suspend bails. The handler never runs (the IRQ is masked by the wakeup path), which
+is why `/proc/interrupts` shows count 0 for it and why `pm_wakeup_irq` reads empty
+after resume (resume clears it) - those two red herrings sent the earlier passes
+looking at wakeup *sources* instead of an armed wakeup *IRQ*.
+
+**Confirmation:** `echo disabled >
+/sys/devices/platform/soc@0/8c0000.geniqup/884000.serial/power/wakeup`, then
+`echo mem` with a +20 s rtc alarm -> **suspend HELD for 21.08 s** (vs ~1.3 s with
+it enabled), and the only wake was `irq=116 pm8xxx_rtc_alarm`, i.e. the intended
+alarm. So disabling the serial console's wakeup fixes the abort outright.
+
+**It is two stacked serial-console problems, both now correctly placed:**
+1. **(primary, the abort) the RX wakeup IRQ 172** aborts every suspend in ~2 s.
+   Fixed by disabling `884000.serial` wakeup.
+2. **(secondary, depth) even once s2idle HELD for 21 s, `aosd`/`cxsd`/`ddr` stayed
+   0** - the SoC held in s2idle but did not reach the RPMh-tracked deep collapse.
+   This is where the earlier `cx`-pinned-at-NOM finding belongs: the console's OPP
+   vote caps the depth. It is real but second-order; the abort had to be fixed
+   first to even observe it.
+
+Both point at the same thing: the serial console does not quiesce for suspend.
+Earlier mis-calls on this defect (MDP clock, "getty is the holder", "USB/VBUS",
+"deep-idle hang") are all retracted above - this is the first cause backed by a
+suspend that actually held.
+
+**Fix (implemented for the primary abort; secondary depth still open).** A udev rule
+disables the console's wakeup at boot:
+`moarchy-device-fp4/82-fp4-serial-wakeup.rules` ->
+`ACTION=="add|change", SUBSYSTEM=="platform", KERNEL=="884000.serial",
+DRIVER=="qcom_geni_serial", ATTR{power/wakeup}="disabled"` (installed to
+`/usr/lib/udev/rules.d`, `moarchy-device-fp4` pkgrel 5). **Verified via the real
+udev path 2026-10-02** (not just a manual echo): rule installed -> `udevadm
+control --reload` + `trigger` flips `884000.serial/power/wakeup` `enabled`->`disabled`
+-> `echo mem` **held 21 s** to its rtc alarm (was ~1.3 s). Ships in the next image;
+no kernel change needed. A cleaner long-term form is kernel/DT not arming the console
+UART RX as a system-wakeup source.
+
+**Still open (secondary, depth):** even with the abort fixed and s2idle holding 21 s,
+`aosd`/`cxsd`/`ddr` stay 0 - the SoC holds in s2idle but does not reach the
+RPMh-tracked deep collapse, capped by the console's `cx`/OPP vote (the earlier
+finding, correctly placed). Next: let the console port runtime-suspend / drop its OPP
+vote during s2idle, then confirm `cxsd`/`aosd` increment after a real `echo mem`.
+`/dev/ttyACM0` (the `ttyGS0` USB-gadget console) remains the out-of-band lifeline.
+Also still open and separate: the compositor does not reliably keep the panel
+dpms-off.
