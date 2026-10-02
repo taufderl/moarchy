@@ -24,7 +24,7 @@ configuring. `WONTFIX` — understood and deliberately left.
 | [D21](#d21) | Bluetooth carries music but not call audio | **OPEN** |
 | [D22](#d22) | The touchscreen controller logs recurring i2c failures | **OPEN** |
 | [D23](#d23) | The camera's CSI PHY supplies are undescribed, and a clock sticks on | **OPEN** |
-| [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). udev stopgap ships; Talari's upstream qcom-geni patch VALIDATED on FP4 (holds 21s, irq 172 gone). Deep-collapse depth cap is a separate open bug | **abort FIXED + patch validated; depth open** |
+| [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). Fixed by mainline `d0cd9c8d0fd5` (qcom-geni force-suspend), VALIDATED on FP4 (holds 21s). udev rule is the stopgap until the kernel carries it. Deep-collapse depth cap is a separate open bug | **abort FIXED (mainline fix validated); depth open** |
 
 ---
 
@@ -1067,11 +1067,23 @@ other `cx` consumer, or a separate RPMh/cpuidle condition, keeps the SoC out of 
 deepest state. The abort - the actual "s2idle won't hold" defect and the battery win
 - is what both fixes address; the depth cap is now a distinct open item.
 
-**Next:** (1) report `Tested-by: ...` on Talari's thread (device-specific validation
-of an in-flight patch - the useful contribution; do NOT write a duplicate); (2)
-propose it as a pmaports backport for the FP4 kernel until it lands upstream; (3)
-when it merges and reaches our kernel, carry it and drop the udev stopgap. Related
-in-flight patches to fold in: the `no_console_suspend` rebalance (Abel Vesa) and the
-wakeup-irq error-path cleanup. Separate open item: the deep-collapse depth cap
-(what still holds `cx`/blocks `cxsd`), and the compositor not keeping the panel
+**The patch is ALREADY MERGED TO MAINLINE (checked 2026-10-02): commit
+`d0cd9c8d0fd5` "serial: qcom-geni: add force suspend/resume to system sleep
+callbacks" is in torvalds/linux.** (Confirmed via the Aug-2026 follow-up "serial:
+qcom-geni: Fix unbalanced pm_runtime_enable" by Abel Vesa, which carries
+`Fixes: d0cd9c8d0fd5` and its own `Reviewed-by: Praveen` + `Tested-by: David
+Heidelberg` (OnePlus 6T) - that follow-up only matters for `no_console_suspend`,
+which FP4 does not set, but carry it too for correctness.) So this is **not** an
+upstreaming task - no `Tested-by` to send, no new patch. The under-review v2 we
+test-carried on `d29-patch-test` is byte-equivalent to the merged commit; use the
+**mainline commit(s)** for the real adoption.
+
+**Next (adopt, don't upstream):** (1) in moarchy, either bump the `sm6350-mainline`
+kernel to a base that already contains `d0cd9c8d0fd5` (+ the unbalance fix), or
+backport those two mainline commits into `linux-moarchy-sm6350` referencing their
+SHAs - then drop the udev stopgap (`82-fp4-serial-wakeup.rules`); (2) flag it to
+Luca Weiss (sm6350-mainline + the pmaports `linux-postmarketos-qcom-sm6350` aport)
+so the fork/pmaports pull it, with our FP4 validation as the justification - a note/
+issue, not an MR of an under-review patch. Separate open item: the deep-collapse
+depth cap (what still holds `cx`/blocks `cxsd`), and the compositor not keeping the panel
 dpms-off.
