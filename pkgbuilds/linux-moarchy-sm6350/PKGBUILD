@@ -93,7 +93,7 @@ pkgname=linux-moarchy-sm6350
 # twice, so a moved pin cannot leave a package claiming the old number.
 _v=${_tag%-sm6350}
 pkgver=${_v#v}
-pkgrel=1
+pkgrel=2
 pkgdesc="Mainline Linux for Qualcomm SM6350/SM7225 (Fairphone 4)"
 arch=('aarch64')
 url="$_url"
@@ -154,7 +154,13 @@ _srcdir="linux-$pkgver-sm6350"
 # returns this is a two-line change and the pin is already resolved.
 source=("linux-$_tag.tar.gz::$_url/archive/$_tag/linux-$_tag.tar.gz"
         'config'
-        'config.debug')
+        'config.debug'
+        '0001-FROMLIST-v4-dt-bindings-net-nfc-add-st-st21nfcd.patch'
+        '0002-FROMLIST-v4-nfc-st-nci-add-raw-NCI-path-for-ST21NFCD.patch'
+        '0003-arm64-dts-qcom-sm7225-fairphone-fp4-add-NFC.patch'
+        '0004-nfc-st-nci-map-proprietary-RF-0x90-to-MIFARE.patch'
+        '0005-nfc-st-nci-restart-the-reference-clock-on-power-up.patch'
+        '0006-nfc-st-nci-treat-the-idle-0x7e-read-as-no-data.patch')
 # The config hash is real and IS computed here, because the vendored file is
 # not upstream's -- it is upstream's with SECURITY_LANDLOCK flipped. Upstream's
 # own sha512 was checked against the fetched copy BEFORE that edit and matched
@@ -162,7 +168,8 @@ source=("linux-$_tag.tar.gz::$_url/archive/$_tag/linux-$_tag.tar.gz"
 # pmaports even though this package no longer downloads anything from them.
 sha512sums=('2247377b260eba48a3bc2840fe8a55cec82c391949b59dc83093af27cdec66245efb8f3c7fc4e105fa8b1da090335cacad8bcc6cfa128dd25ff7b473297f2530'
             '5ca59a057386d8cf18cfeffa0db0b17a169b814c9e2864e77274861b9e173b7fb2d84238db26dd537a652eeee2233c10b49f73e0e1ed7236c1adc10ae39a96fe'
-            '2ae75b0c62247abfca811d2c3ce1ae94f5b2dbadcd486f7936b050b7ec36dc3737db09acf63e60e1123eb1e3261faca515ca6d20448852f4311039d002661976')
+            '2ae75b0c62247abfca811d2c3ce1ae94f5b2dbadcd486f7936b050b7ec36dc3737db09acf63e60e1123eb1e3261faca515ca6d20448852f4311039d002661976'
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 # Do not build this on a case-insensitive filesystem -- the kernel carries both
 # net/netfilter/xt_TCPMSS.c and xt_tcpmss.c, and APFS keeps one of them. The
@@ -178,6 +185,18 @@ prepare() {
     echo "!! case-sensitive one."
     return 1
   fi
+
+  # VERIFICATION BUILD (branch nfc-verify, not for fp4): carry PR #14's NFC
+  # backport (Kristian Brox's st,st21nfcd raw-NCI FROMLIST v4 + the FP4 nfc@8
+  # node + the 3 FP4 fixes) on top of the pinned tag, to confirm it integrates
+  # into our own build chain and to get a REACHABLE NFC kernel (shipped uname,
+  # so WiFi/modules work) for reproducing the poll-cycle wedge. Permanence still
+  # follows Path A (upstream merge, then bump the pin) per the NFC notes; this
+  # branch exists only to verify. NFC is enabled =y in config.
+  for p in "$srcdir"/000*-*.patch; do
+    echo "==> applying $(basename "$p")"
+    patch -p1 --fuzz=3 < "$p" || return 1
+  done
 
   cp "$srcdir/config" .config
 
