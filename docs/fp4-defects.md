@@ -24,7 +24,7 @@ configuring. `WONTFIX` — understood and deliberately left.
 | [D21](#d21) | Bluetooth carries music but not call audio | **OPEN** |
 | [D22](#d22) | The touchscreen controller logs recurring i2c failures | **OPEN** |
 | [D23](#d23) | The camera's CSI PHY supplies are undescribed, and a clock sticks on | **OPEN** |
-| [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). udev stopgap holds 21s; real fix = test Talari's in-flight qcom-geni force-suspend patch (fixes abort + depth) | **stopgap shipped; upstream fix in flight** |
+| [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). udev stopgap ships; Talari's upstream qcom-geni patch VALIDATED on FP4 (holds 21s, irq 172 gone). Deep-collapse depth cap is a separate open bug | **abort FIXED + patch validated; depth open** |
 
 ---
 
@@ -1052,12 +1052,26 @@ does not set that, so it should fix **both** layers for us. Its stated motivatio
 ("resources ... not gated ... prevents the platform from reaching its lowest idle
 state") is exactly this defect.
 
-**Recommendation (do NOT write a duplicate patch - [[search-lore-before-writing-driver]]):**
-cherry-pick Talari's patch onto the sm6350 kernel, test on FP4 that `echo mem` holds
-*and* `qcom_stats` `cxsd`/`aosd` increment, and report a `Tested-by:` on the list -
-device-specific validation of an in-flight patch is the useful contribution here, and
-it replaces the udev stopgap with the real fix (then drop the rule). Related
-in-flight patches to fold in: the `no_console_suspend` rebalance follow-up (Abel
-Vesa) and the wakeup-irq error-path cleanup. Test attended (suspend) with
-`/dev/ttyACM0` as the lifeline. Also still open and separate: the compositor does
-not reliably keep the panel dpms-off.
+**VALIDATED on FP4 hardware 2026-10-02 (patch fixes the abort; depth is a SEPARATE
+bug after all).** Talari's patch was cherry-picked onto the pinned kernel (branch
+`d29-patch-test`, kernel `pkgrel 2`), built in CI, and transient-booted
+(`fastboot boot`, boot-only, modules unchanged since `uname` is identical) with the
+udev workaround removed and **serial wakeup ENABLED** - the clean test. Result:
+`echo mem` **held 21.8 s** to its rtc alarm (was ~1.3 s), and a kprobe on
+`pm_system_irq_wakeup` showed the only wake was `irq 116 pm8xxx_rtc_alarm` (intended)
+- **irq 172 no longer aborts suspend.** So the patch fixes the abort on FP4 exactly
+as well as the udev rule. **But `aosd`/`cxsd`/`ddr` stayed 0** even with the patch
+dropping the serial's OPP/`cx` vote - so the deep-collapse depth cap is **NOT** the
+serial after all (this retracts the "secondary = serial OPP vote" guess above): some
+other `cx` consumer, or a separate RPMh/cpuidle condition, keeps the SoC out of the
+deepest state. The abort - the actual "s2idle won't hold" defect and the battery win
+- is what both fixes address; the depth cap is now a distinct open item.
+
+**Next:** (1) report `Tested-by: ...` on Talari's thread (device-specific validation
+of an in-flight patch - the useful contribution; do NOT write a duplicate); (2)
+propose it as a pmaports backport for the FP4 kernel until it lands upstream; (3)
+when it merges and reaches our kernel, carry it and drop the udev stopgap. Related
+in-flight patches to fold in: the `no_console_suspend` rebalance (Abel Vesa) and the
+wakeup-irq error-path cleanup. Separate open item: the deep-collapse depth cap
+(what still holds `cx`/blocks `cxsd`), and the compositor not keeping the panel
+dpms-off.
