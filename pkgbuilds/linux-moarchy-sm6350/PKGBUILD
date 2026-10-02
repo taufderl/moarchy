@@ -93,7 +93,7 @@ pkgname=linux-moarchy-sm6350
 # twice, so a moved pin cannot leave a package claiming the old number.
 _v=${_tag%-sm6350}
 pkgver=${_v#v}
-pkgrel=1
+pkgrel=2
 pkgdesc="Mainline Linux for Qualcomm SM6350/SM7225 (Fairphone 4)"
 arch=('aarch64')
 url="$_url"
@@ -154,7 +154,8 @@ _srcdir="linux-$pkgver-sm6350"
 # returns this is a two-line change and the pin is already resolved.
 source=("linux-$_tag.tar.gz::$_url/archive/$_tag/linux-$_tag.tar.gz"
         'config'
-        'config.debug')
+        'config.debug'
+        '0001-serial-qcom-geni-force-suspend.patch')
 # The config hash is real and IS computed here, because the vendored file is
 # not upstream's -- it is upstream's with SECURITY_LANDLOCK flipped. Upstream's
 # own sha512 was checked against the fetched copy BEFORE that edit and matched
@@ -162,7 +163,8 @@ source=("linux-$_tag.tar.gz::$_url/archive/$_tag/linux-$_tag.tar.gz"
 # pmaports even though this package no longer downloads anything from them.
 sha512sums=('2247377b260eba48a3bc2840fe8a55cec82c391949b59dc83093af27cdec66245efb8f3c7fc4e105fa8b1da090335cacad8bcc6cfa128dd25ff7b473297f2530'
             '5ca59a057386d8cf18cfeffa0db0b17a169b814c9e2864e77274861b9e173b7fb2d84238db26dd537a652eeee2233c10b49f73e0e1ed7236c1adc10ae39a96fe'
-            '2ae75b0c62247abfca811d2c3ce1ae94f5b2dbadcd486f7936b050b7ec36dc3737db09acf63e60e1123eb1e3261faca515ca6d20448852f4311039d002661976')
+            '2ae75b0c62247abfca811d2c3ce1ae94f5b2dbadcd486f7936b050b7ec36dc3737db09acf63e60e1123eb1e3261faca515ca6d20448852f4311039d002661976'
+            'SKIP')
 
 # Do not build this on a case-insensitive filesystem -- the kernel carries both
 # net/netfilter/xt_TCPMSS.c and xt_tcpmss.c, and APFS keeps one of them. The
@@ -178,6 +180,17 @@ prepare() {
     echo "!! case-sensitive one."
     return 1
   fi
+
+  # TEST BACKPORT (scope deliberately exceeded, see header): an UNDER-REVIEW
+  # upstream fix, "serial: qcom-geni: add force suspend/resume to system sleep
+  # callbacks" (Praveen Talari, 2026-07, lore). It makes the geni UART run its
+  # runtime-suspend from the system-sleep path (pm_runtime_force_suspend), which
+  # applies the sleep pinctrl (RX pull-up) and drops the OPP/cx vote - fixing D29
+  # (s2idle aborts in ~2s on the serial-console RX wakeup, and never reaches the
+  # deep collapse). This branch (d29-patch-test) exists to validate it on FP4
+  # hardware for a Tested-by; do NOT merge to fp4 until it passes and ideally
+  # until the patch lands upstream. See docs/fp4-defects.md D29.
+  patch -p1 --fuzz=3 < "$srcdir/0001-serial-qcom-geni-force-suspend.patch"
 
   cp "$srcdir/config" .config
 
