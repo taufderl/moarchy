@@ -93,7 +93,7 @@ pkgname=linux-moarchy-sm6350
 # twice, so a moved pin cannot leave a package claiming the old number.
 _v=${_tag%-sm6350}
 pkgver=${_v#v}
-pkgrel=3
+pkgrel=4
 pkgdesc="Mainline Linux for Qualcomm SM6350/SM7225 (Fairphone 4)"
 arch=('aarch64')
 url="$_url"
@@ -162,7 +162,8 @@ source=("linux-$_tag.tar.gz::$_url/archive/$_tag/linux-$_tag.tar.gz"
         '0004-nfc-st-nci-map-proprietary-RF-0x90-to-MIFARE.patch'
         '0005-nfc-st-nci-restart-the-reference-clock-on-power-up.patch'
         '0006-nfc-st-nci-treat-the-idle-0x7e-read-as-no-data.patch'
-        '0007-d29-geni-force-suspend.patch')
+        '0007-d29-geni-force-suspend.patch'
+        '0008-disable-pmk8350-pon.patch')
 # The config hash is real and IS computed here, because the vendored file is
 # not upstream's -- it is upstream's with SECURITY_LANDLOCK flipped. Upstream's
 # own sha512 was checked against the fetched copy BEFORE that edit and matched
@@ -171,7 +172,7 @@ source=("linux-$_tag.tar.gz::$_url/archive/$_tag/linux-$_tag.tar.gz"
 sha512sums=('2247377b260eba48a3bc2840fe8a55cec82c391949b59dc83093af27cdec66245efb8f3c7fc4e105fa8b1da090335cacad8bcc6cfa128dd25ff7b473297f2530'
             '6988163648f4698a8ada6c1dde1e4878f03520a291c76418dc27dfde2298e5e6688f365b86c33f00786db634b2d00034ce03250fd6e2f717f60ed7c9f9012271'
             '2ae75b0c62247abfca811d2c3ce1ae94f5b2dbadcd486f7936b050b7ec36dc3737db09acf63e60e1123eb1e3261faca515ca6d20448852f4311039d002661976'
-            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 # Do not build this on a case-insensitive filesystem -- the kernel carries both
 # net/netfilter/xt_TCPMSS.c and xt_tcpmss.c, and APFS keeps one of them. The

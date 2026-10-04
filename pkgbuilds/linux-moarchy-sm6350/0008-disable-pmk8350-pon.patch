@@ -1,0 +1,38 @@
+From: Luca Weiss <luca.weiss@fairphone.com>
+Subject: [FROMLIST v1] arm64: dts: qcom: sm7225-fairphone-fp4: Disable PMK8350 PON
+
+Two PMICs on this phone have a PON (power-on / reboot-reason) block, the
+PM6350 and the PMK8350. Only one should be enabled at a time. With both
+enabled the reboot-mode wiring breaks, so `reboot bootloader` and
+`reboot recovery` no longer reach the bootloader (they boot straight back
+into the OS). Keep the PM6350 PON, which carries the mode-bootloader /
+mode-recovery magics (pm6350.dtsi), and disable the PMK8350 PON.
+
+Upstream commit 844d77d0bf8d ("arm64: dts: qcom: sm7225-fairphone-fp4:
+Disable PMK8350 PON"), Fixes: 582e7c1026fa ("arm64: dts: qcom:
+sm7225-fairphone-fp4: Add pmk8350 PMIC"). Not yet in the pinned base tag
+(v7.2.0-sm6350 = 16337c9dd348), so carried here as a patch until the pin
+advances.
+---
+ arch/arm64/boot/dts/qcom/sm7225-fairphone-fp4.dts | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm7225-fairphone-fp4.dts b/arch/arm64/boot/dts/qcom/sm7225-fairphone-fp4.dts
+--- a/arch/arm64/boot/dts/qcom/sm7225-fairphone-fp4.dts
++++ b/arch/arm64/boot/dts/qcom/sm7225-fairphone-fp4.dts
+@@ -1746,3 +1746,15 @@ &wifi {
+
+ 	status = "okay";
+ };
++
++/*
++ * Two PMICs on this phone have a PON block, the PM6350 and PMK8350. Only one
++ * should be enabled at a time, so disable PMK8350 PON and keep PM6350 PON
++ * (which carries the reboot-mode magics). Having both breaks reboot-mode, so
++ * `reboot bootloader` / `reboot recovery` no longer reach the bootloader.
++ * Upstream: Luca Weiss, "arm64: dts: qcom: sm7225-fairphone-fp4: Disable
++ * PMK8350 PON" (FROMLIST, Fixes: 582e7c1026fa).
++ */
++&pmk8350_pon {
++	status = "disabled";
++};
