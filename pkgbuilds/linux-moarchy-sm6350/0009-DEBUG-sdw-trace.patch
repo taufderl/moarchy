@@ -1,0 +1,39 @@
+Subject: [DEBUG, DO NOT MERGE] trace SoundWire capture stream prepare/port alloc
+
+Temporary pr_info/dev_info probes to pinpoint why the FP4 mic capture stream
+programs no SoundWire ports (capture read timeout). Remove once the mic fix is
+found. Two sites:
+  - qcom_snd_sdw_prepare(): is the sdw stream retrievable at prepare time?
+  - qcom_swrm_hw_params(): does the TX controller get the stream, and does
+    port allocation succeed?
+---
+ drivers/soundwire/qcom.c | 2 ++
+ sound/soc/qcom/sdw.c     | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/sound/soc/qcom/sdw.c b/sound/soc/qcom/sdw.c
+--- a/sound/soc/qcom/sdw.c
++++ b/sound/soc/qcom/sdw.c
+@@ -135,6 +135,8 @@ int qcom_snd_sdw_prepare(struct snd_pcm_substream *substream,
+ 		return 0;
+
+ 	sruntime = qcom_snd_sdw_get_stream(substream);
++	pr_info("SDWDBG prepare: cpu_dai->id=%d sruntime=%s prepared=%d\n",
++		cpu_dai->id, sruntime ? "SET" : "NULL", *stream_prepared);
+ 	if (!sruntime)
+ 		return 0;
+
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -1295,8 +1295,10 @@ static int qcom_swrm_hw_params(struct snd_pcm_substream *substream,
+ 	struct sdw_stream_runtime *sruntime = ctrl->sruntime[dai->id];
+ 	int ret;
+
++	dev_info(ctrl->dev, "SDWDBG hw_params: dai->id=%d sruntime=%s\n", dai->id, sruntime ? "SET" : "NULL");
+ 	ret = qcom_swrm_stream_alloc_ports(ctrl, sruntime, params,
+ 					   substream->stream);
++	dev_info(ctrl->dev, "SDWDBG alloc_ports ret=%d\n", ret);
+ 	if (ret)
+ 		qcom_swrm_stream_free_ports(ctrl, sruntime);
+
