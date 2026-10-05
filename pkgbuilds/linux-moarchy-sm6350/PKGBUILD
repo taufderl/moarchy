@@ -93,7 +93,7 @@ pkgname=linux-moarchy-sm6350
 # twice, so a moved pin cannot leave a package claiming the old number.
 _v=${_tag%-sm6350}
 pkgver=${_v#v}
-pkgrel=5
+pkgrel=6
 pkgdesc="Mainline Linux for Qualcomm SM6350/SM7225 (Fairphone 4)"
 arch=('aarch64')
 url="$_url"
@@ -170,7 +170,7 @@ source=("linux-$_tag.tar.gz::$_url/archive/$_tag/linux-$_tag.tar.gz"
 # (e20a5b49...51631), which is what makes the vendored file traceable to
 # pmaports even though this package no longer downloads anything from them.
 sha512sums=('2247377b260eba48a3bc2840fe8a55cec82c391949b59dc83093af27cdec66245efb8f3c7fc4e105fa8b1da090335cacad8bcc6cfa128dd25ff7b473297f2530'
-            '3534c985f3ff6a80058c6a77f6bb72886e737631e5fdd602a9b0abc4f288e8f03c9808c1b9da8d198b27535e4fe41e45553769e68d8c575a806795db72c25d78'
+            'cb6aeb9c0e618855aeb07449cb95d7cad4bf84898fe9982e4a555dd9b401e3ac913cb9ed8d7ed294b256ca3738312363403caf4ba3adcc9363d9a955e302ee4e'
             '2ae75b0c62247abfca811d2c3ce1ae94f5b2dbadcd486f7936b050b7ec36dc3737db09acf63e60e1123eb1e3261faca515ca6d20448852f4311039d002661976'
             'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
