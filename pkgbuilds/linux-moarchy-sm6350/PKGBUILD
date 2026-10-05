@@ -93,7 +93,7 @@ pkgname=linux-moarchy-sm6350
 # twice, so a moved pin cannot leave a package claiming the old number.
 _v=${_tag%-sm6350}
 pkgver=${_v#v}
-pkgrel=4
+pkgrel=5
 pkgdesc="Mainline Linux for Qualcomm SM6350/SM7225 (Fairphone 4)"
 arch=('aarch64')
 url="$_url"
