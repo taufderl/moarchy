@@ -30,6 +30,7 @@ and several were wrong for a reason that was not the obvious one.
 | [D25](#d25) | The Docker TUI soft-locked on raw pkexec in a terminal | **FIXED** |
 | [D27](#d27) | The on-screen keyboard did not work in the app drawer search | **FIXED** |
 | [D10](#d10) | The LPI pinctrl lost a boot race and took all audio with it | **FIXED** |
+| [mic-cfg](#mic-port-config) | Capture regressed to silence on a wrong SoundWire port config | **FIXED** |
 
 ---
 
@@ -1573,5 +1574,41 @@ should be measured rather than assumed, because a longer timeout delays every
 *genuine* probe failure by the same amount.
 
 A reboot clears it; the next boot came up normally and stayed that way.
+
+---
+
+## Capture regressed on the SoundWire port config, and was re-fixed {#mic-port-config}
+
+**Status: FIXED 2026-10-06, verified on hardware (acoustic loopback + voice +
+soundrecorder).** During the fp4-dev-all integration the built-in mic silently
+regressed to digital silence. The cause was the SoundWire TX port config in the
+DT, not the UCM: the per-direction port counts had been raised to the
+controllers' totals (`qcom,din-ports`/`qcom,dout-ports` RX `0/5` -> `1/6`, TX
+`5/0` -> `6/1`), the per-port arrays widened to match, and `tx-port-mapping`
+set to `<1 2 3 4>`. That was done to silence a qcom-soundwire warning:
+
+```
+qcom-soundwire 3210000.soundwire: din-ports (0) mismatch with controller (1)
+```
+
+**The warning is cosmetic and expected here.** The smaller per-direction counts
+describe this board's real capture routing; raising them to the controller
+totals stops capture entirely. It is a nasty failure to spot because the card
+still registers and wcd938x still binds over SoundWire, so the probe log looks
+clean -- but the ADC's data then lands on ports the TX macro decimators never
+read. The analogue front end powers up correctly (codec regmap during capture:
+`ANA_MICB1` 0x22->0x62, `ANA_CLK_CTL` 0x00->0x18) and `arecord` runs to
+completion, yet every route delivers a short DC transient and then exact zeros.
+Only a capture against a stimulus reveals it.
+
+**Fix:** restore the per-direction counts/arrays that capture on hardware and set
+`tx-port-mapping = <2 3 4 5>`. Verified: handset AMIC1 reaches userspace via
+`TX_CODEC_DMA_TX_3`, a speaker-tone acoustic loopback drives a per-channel RMS
+envelope from a ~85 quiet floor to ~8000-30000 under the tone and back. The
+capture route is both decimators from ADC0 (`ucm-HiFi.conf`), so the mono mic
+lands on both channels. The same mistake had reached upstream PR #11 and is
+corrected there too (follow-up commit, the controller-count warning documented
+as expected). Lesson: do not "fix" the SoundWire port-count warning by matching
+the controller totals; the DT counts are load-bearing.
 
 ---
