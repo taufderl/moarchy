@@ -239,7 +239,12 @@ pkgver=$_ver
 #    wl_touch trace). Changed the drawer's keyboardFocus from Exclusive to
 #    OnDemand (AppDrawer.qml): the OSK gets touch again, the field still focuses on
 #    tap, and the close-drag still works. Verified typing on the FP4.
-pkgrel=14
+# 15: one stable Wi-Fi MAC per network (NetworkManager stable-ssid, conf.d
+#    30-moarchy-wifi-mac.conf). ath10k invents a random MAC every boot, so each
+#    boot was a new device to the router; on the FP4 the router's pool filled
+#    and DHCPv4 refused the phone outright. Verified: derived MAC, identical
+#    across reconnects.
+pkgrel=15
 pkgdesc="Omarchy's look, keybindings and theming on a phone, under Hyprland"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
@@ -546,6 +551,11 @@ package() {
   # 2026-09-17, where this file's first install shipped 0644 and did nothing.
   install -Dm600 "$_repo/default/NetworkManager/system-connections/moarchy-mobile-data.nmconnection" \
     "$pkgdir/usr/lib/NetworkManager/system-connections/moarchy-mobile-data.nmconnection"
+
+  # One stable MAC per Wi-Fi network instead of a random one per boot. See the
+  # file for why; it is policy for every device, not an FP4 quirk.
+  install -Dm644 "$_repo/default/NetworkManager/conf.d/30-moarchy-wifi-mac.conf" \
+    "$pkgdir/usr/lib/NetworkManager/conf.d/30-moarchy-wifi-mac.conf"
 
   # --- systemd -------------------------------------------------------------
   install -Dm644 "$_repo/default/systemd/system/moarchy-firstboot.service" \
