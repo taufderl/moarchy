@@ -30,6 +30,30 @@ set -u
 CARD=0
 
 ROUTES=(
+    # Codec-side capture routing: AMIC1 -> ADC1 -> SoundWire TX -> decimators.
+    # This is the UCM Mic EnableSequence, and it has to live here too because
+    # that sequence never runs on this card (ACP offers no UCM profile, see the
+    # header). Both decimators take ADC0 (= the codec's ADC1 = AMIC1) because
+    # the backend is forced to two channels; ADC1_MIXER Switch is what puts the
+    # ADC on the SoundWire TX port -- without it, on a clean mixer state, every
+    # capture fails with EIO. Enum values are item indices (SWR_MIC = 1,
+    # ADC0 = 1) so the comparison in assert_routes() matches what cget prints.
+    # Gains are the calibrated ones from ucm-HiFi.conf.
+    #
+    # Until 2026-10-08 nothing in the image set these at all; development
+    # phones only worked because alsa-restore replayed mixer state saved from
+    # manual test sessions (docs/fp4-fixes.md D32).
+    "TX DEC0 MUX|1"                           # SWR_MIC
+    "TX DEC1 MUX|1"                           # SWR_MIC
+    "TX SMIC MUX0|1"                          # ADC0
+    "TX SMIC MUX1|1"                          # ADC0
+    "TX_AIF1_CAP Mixer DEC0|1"
+    "TX_AIF1_CAP Mixer DEC1|1"
+    "ADC1_MIXER Switch|1"
+    "ADC1 Volume|20"
+    "TX_DEC0 Volume|88"
+    "TX_DEC1 Volume|88"
+
     "MultiMedia2 Mixer TX_CODEC_DMA_TX_3|1"   # capture:  mic -> MultiMedia2
     "QUIN_MI2S_RX Audio Mixer MultiMedia1|1"  # playback: MultiMedia1 -> amps
     "ADC1 Switch|1"                           # the codec's AMIC1 input

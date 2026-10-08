@@ -31,6 +31,7 @@ and several were wrong for a reason that was not the obvious one.
 | [D27](#d27) | The on-screen keyboard did not work in the app drawer search | **FIXED** |
 | [D10](#d10) | The LPI pinctrl lost a boot race and took all audio with it | **FIXED** |
 | [mic-cfg](#mic-port-config) | Capture regressed to silence on a wrong SoundWire port config | **FIXED** |
+| [D32](#d32) | A fresh flash had no audio at all: the route helper needed amixer, and nothing set the capture routes | **FIXED** |
 
 ---
 
@@ -1606,9 +1607,54 @@ Only a capture against a stimulus reveals it.
 `TX_CODEC_DMA_TX_3`, a speaker-tone acoustic loopback drives a per-channel RMS
 envelope from a ~85 quiet floor to ~8000-30000 under the tone and back. The
 capture route is both decimators from ADC0 (`ucm-HiFi.conf`), so the mono mic
-lands on both channels. The same mistake had reached upstream PR #11 and is
+lands on both channels. (Correction 2026-10-08: that route also needs
+`ADC1_MIXER Switch`, and on this card it is applied by `fp4-audio-route`, not by
+the UCM file -- see D32.) The same mistake had reached upstream PR #11 and is
 corrected there too (follow-up commit, the controller-count warning documented
 as expected). Lesson: do not "fix" the SoundWire port-count warning by matching
 the controller totals; the DT counts are load-bearing.
 
 ---
+
+## D32 -- a fresh flash had no audio at all {#d32}
+
+**Status: FIXED 2026-10-08, verified on hardware from a clean flash and a clean
+mixer state (PipeWire record + playback, and direct ALSA).** Found by the first
+full flash of the sm6350-7.2.y image: the card registered, but PipeWire exposed
+no sink and no source --
+
+```
+wireplumber: s-monitors: Failed to create ALSA node alsa_input.platform-sound.capture.1.0:
+             Object activation aborted: PipeWire proxy destroyed
+fp4-audio-route: sound card did not appear
+```
+
+Three faults, stacked, every one of them hidden on the development phones:
+
+1. **`moarchy-device-fp4` did not depend on `alsa-utils`.** `fp4-audio-route`
+   reads and sets every route with `amixer`; without it `get()` returns nothing,
+   the helper decides the card is not up and gives up after 30 s, no route is
+   ever armed, the PCMs cannot be opened and WirePlumber's node activation
+   aborts. Fix: `depends+=(alsa-utils)`.
+2. **Nothing set the codec-side capture routing.** `TX DEC0/1 MUX`,
+   `TX SMIC MUX0/1` and `TX_AIF1_CAP Mixer DEC0/1` were only in the UCM
+   `EnableSequence`, and UCM never runs on this card (ACP offers it no profile,
+   D13). `fp4-audio-route` armed only the DSP-side routes. With the codec routes
+   off, a stream opens, reports RUNNING and delivers about 7000 frames, then
+   nothing. Fix: the helper now arms the codec routes and the calibrated gains.
+3. **The capture route itself was incomplete.** Both decimators on ADC0 (the
+   route the README and `ucm-HiFi.conf` describe) is not enough on a clean mixer
+   state: `ADC1_MIXER Switch` is what puts the ADC on the SoundWire TX port,
+   and without it every capture fails with `read error: Input/output error`.
+   Fix: added to the helper and to the UCM `Mic` sequence (verified via
+   `alsaucm` from a clean state).
+
+**Why it hid:** development phones had `alsa-utils` installed by hand, and with
+it `alsa-restore.service`, which at every boot replayed mixer state saved from
+manual test sessions -- state that happened to contain all of the above,
+including `ADC1_MIXER Switch` left on by earlier route experiments. So the
+mic "worked from a cold boot with no manual step" on exactly the phones it was
+tested on, and could not have worked on any fresh install. The lesson: verify
+audio on a **fresh flash with a clean mixer state**, not on a phone that has
+been hand-tested.
+
