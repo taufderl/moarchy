@@ -26,7 +26,7 @@ configuring. `WONTFIX` — understood and deliberately left.
 | [D23](#d23) | The camera's CSI PHY supplies are undescribed, and a clock sticks on | **OPEN** |
 | [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). Fixed by mainline `d0cd9c8d0fd5` (qcom-geni force-suspend), VALIDATED on FP4 (holds 21s). udev rule is the stopgap until the kernel carries it. Deep-collapse depth cap is a separate open bug | **abort FIXED (mainline fix validated); depth open** |
 | [D30](#d30) | The quickshell before-sleep lock traps a locked-password account: it asks PAM, a locked password can never authenticate, so the first sleep locks the user out | **OPEN — important** |
-| [D31](#d31) | Some boots have no sound card: the ADSP runs but its APR audio services never register, so the LPASS clocks and LPI pinctrl never appear | **OPEN -- important** |
+| [D31](#d31) | Some boots have no sound card: the ADSP runs but its APR audio services never register, so the LPASS clocks and LPI pinctrl never appear. Recoverable without a reboot by restarting the ADSP | **OPEN -- important** |
 
 ---
 
@@ -1169,6 +1169,32 @@ loading and adds the LPASS/ADSP-heap VMIDs for ownership transfer. The pinned ta
 lacks it. Bumping the kernel pin to the branch head picks it up; whether it cures
 this needs a multi-boot count, since the failure is intermittent.
 
-**Workaround:** reboot. **Diagnose a bad boot:** `lsmod | grep -E 'q6afe|apr'`
+**2026-10-08, on the bumped kernel (sm6350-7.2.y @ 5ba18a1da713):**
+
+- **`b8e6fa9877f6` does not prevent it.** In a 5-boot loop on the kernel that
+  carries it, boots 1-3 had the card and all three q6 modules; boot 4 came up
+  with no card and the identical signature. (The loop stopped there because
+  that boot also never got an IPv4 lease; WiFi associated, only IPv6 came up.
+  Whether that is related is open -- WiFi's QMI services go over the same QRTR
+  bus as the audio PD's service registry.)
+- **The APR bus is empty on a bad boot:** `/sys/bus/apr/devices` lists
+  nothing, with `apr`, `qrtr` and `qcom_pd_mapper` loaded and the ADSP up at
+  ~15 s. So the audio PD's services are never announced, rather than announced
+  late.
+- **Restarting the ADSP recovers it without a reboot:**
+
+  ```
+  echo stop  | sudo tee /sys/class/remoteproc/remoteproc0/state
+  echo start | sudo tee /sys/class/remoteproc/remoteproc0/state
+  ```
+
+  Within 15 s `q6afe`, `q6afe_clocks`, `q6asm` and `q6adm` autoload, the
+  card registers and `devices_deferred` empties -- the stuck devices probe
+  even though the 60 s deferred-probe window has long expired. So this is a
+  boot-time race in the audio PD's first start, not a lasting fault, and it
+  points at a cheap mitigation (if no card ~90 s after boot, restart the ADSP
+  once; the sensor core shares the ADSP, so iio-sensor-proxy blips).
+
+**Workaround:** reboot, or restart the ADSP as above. **Diagnose a bad boot:** `lsmod | grep -E 'q6afe|apr'`
 (apr present, q6afe absent = this defect) and
 `sudo cat /sys/kernel/debug/devices_deferred` (the 33c0000.pinctrl chain).
