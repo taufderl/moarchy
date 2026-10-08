@@ -26,6 +26,7 @@ configuring. `WONTFIX` — understood and deliberately left.
 | [D23](#d23) | The camera's CSI PHY supplies are undescribed, and a clock sticks on | **OPEN** |
 | [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). Fixed by mainline `d0cd9c8d0fd5` (qcom-geni force-suspend), VALIDATED on FP4 (holds 21s). udev rule is the stopgap until the kernel carries it. Deep-collapse depth cap is a separate open bug | **abort FIXED (mainline fix validated); depth open** |
 | [D30](#d30) | The quickshell before-sleep lock traps a locked-password account: it asks PAM, a locked password can never authenticate, so the first sleep locks the user out | **OPEN — important** |
+| [D31](#d31) | Some boots have no sound card: the ADSP runs but its APR audio services never register, so the LPASS clocks and LPI pinctrl never appear | **OPEN -- important** |
 
 ---
 
@@ -1130,3 +1131,44 @@ byte stream and both the command echo and its output come back garbled.)
 
 Until fixed, any full flash leaves the phone one sleep away from a serial-only
 lockout.
+
+---
+
+## D31 -- some boots have no sound card: the ADSP's APR audio services never register {#d31}
+
+**Status: OPEN -- important (found 2026-10-08, on the mic-fix kernel `d7f57bf`
+flashed over the fp4-dev-all rootfs).** Intermittent: the boot straight after the
+flash had a working card and captured audio; a later cold boot came up with
+`/proc/asound/cards` = `--- no soundcards ---` and stayed that way.
+
+It looks like D10 but is not D10. `deferred_probe_timeout=60` is on the cmdline
+and the ADSP was **early**, not late:
+
+```
+[   16.569564] remoteproc remoteproc0: remote processor adsp is now up
+[   78.910054] platform 33c0000.pinctrl: deferred probe pending: (reason unknown)
+[   78.853687] platform 3370000.codec: deferred probe pending: va_macro: unable to get macro clock
+```
+
+The difference is one layer down. `apr`, `qrtr` and `qcom_pd_mapper` are loaded,
+but **no APR service device ever appears**, so `q6afe`, `q6afe_clocks`,
+`q6afe_dai` and `snd_q6dsp_common` are never autoloaded. Without q6afe-clocks the
+LPASS clocks do not exist, the LPI pinctrl (`33c0000.pinctrl`) cannot probe, and
+everything behind it (both macros, both SoundWire controllers, the sound card)
+stays deferred until the timeout gives up. Writing `33c0000.pinctrl` to
+`/sys/bus/platform/drivers_probe` afterwards does not bring it back, because the
+missing supplier is the q6 clock service, not the pinctrl itself.
+
+So on these boots the audio protection domain on the ADSP never announces its
+services, although the ADSP remoteproc reports `running`.
+
+**Candidate fix, untested:** upstream `b8e6fa9877f6` ("arm64: dts: qcom: sm6350:
+Add memory-region for audio PD", Luca Weiss, on `sm6350-7.2.y` after the
+`v7.2.0-sm6350` tag) reserves a remote heap for the ADSP's audio PD dynamic
+loading and adds the LPASS/ADSP-heap VMIDs for ownership transfer. The pinned tag
+lacks it. Bumping the kernel pin to the branch head picks it up; whether it cures
+this needs a multi-boot count, since the failure is intermittent.
+
+**Workaround:** reboot. **Diagnose a bad boot:** `lsmod | grep -E 'q6afe|apr'`
+(apr present, q6afe absent = this defect) and
+`sudo cat /sys/kernel/debug/devices_deferred` (the 33c0000.pinctrl chain).
