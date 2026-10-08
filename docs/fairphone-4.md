@@ -146,7 +146,7 @@ next Android phone would be cheap:
 | Added | What |
 | --- | --- |
 | `manifest.toml` `[device.fp4]`, `[pil-squasher]` | the pins |
-| `pkgbuilds/linux-moarchy-sm6350/` | kernel, `v7.2.0-sm6350`, + the vendored config |
+| `pkgbuilds/linux-moarchy-sm6350/` | kernel, `sm6350-7.2.y` @ `5ba18a1da713` (was the `v7.2.0-sm6350` tag), + the vendored config |
 | `pkgbuilds/firmware-moarchy-fp4/` | the FairBlobs blobs |
 | `pkgbuilds/pil-squasher/` | the tool that merges them |
 | `pkgbuilds/moarchy-device-fp4/` | device facts, UCM, udev, WirePlumber |

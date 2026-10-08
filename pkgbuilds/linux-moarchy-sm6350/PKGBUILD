@@ -87,13 +87,14 @@
 _url=$(manifest_get device.fp4 kernel-url) || return 1
 _tag=$(manifest_get device.fp4 kernel-ref) || return 1
 _commit=$(manifest_get device.fp4 kernel-commit) || return 1
+_kver=$(manifest_get device.fp4 kernel-version) || return 1
 
 pkgname=linux-moarchy-sm6350
-# The tag IS the version: v7.2.0-sm6350 -> 7.2.0. Derived rather than written
-# twice, so a moved pin cannot leave a package claiming the old number.
-_v=${_tag%-sm6350}
-pkgver=${_v#v}
-pkgrel=9
+# The version comes from manifest.toml's kernel-version. It used to be derived
+# from the tag (v7.2.0-sm6350 -> 7.2.0), but the pin is now a commit on the
+# sm6350-7.2.y branch, and a branch name carries no version.
+pkgver=$_kver
+pkgrel=10
 pkgdesc="Mainline Linux for Qualcomm SM6350/SM7225 (Fairphone 4)"
 arch=('aarch64')
 url="$_url"
@@ -114,17 +115,15 @@ options=('!strip' '!debug')
 
 _flavor=moarchy-sm6350
 
-# The directory GitHub's tarball extracts to, and it is NOT derived from the
-# tag the way the tarball's own name is. The tag is v7.2.0-sm6350; the archive
-# is named for the tag, but the directory inside it drops the leading `v`:
+# The directory GitHub's tarball extracts to. For a commit archive it is the
+# repository name and the FULL commit id (checked with `tar tzf`):
 #
-#   linux-v7.2.0-sm6350.tar.gz   ->   linux-7.2.0-sm6350/
+#   <sha>.tar.gz   ->   linux-5ba18a1da7133a04fa9bf5c1b5cde3e718d7c41b/
 #
-# Checked with `tar tzf`, after a `cd` built from the tag failed with
-# "No such file or directory" during prepare() -- three lines into a build
-# that had just spent a minute downloading 266 MB. pkgver already has the `v`
-# stripped, so it is the right thing to build this from.
-_srcdir="linux-$pkgver-sm6350"
+# (A tag archive was different again -- linux-v7.2.0-sm6350.tar.gz extracted to
+# linux-7.2.0-sm6350/, dropping the `v` -- which cost a build once. Derive the
+# name from what is actually fetched, never from what it looks like it should be.)
+_srcdir="linux-$_commit"
 
 # A tarball, and the sha512 postmarketOS publishes for it.
 #
@@ -144,15 +143,18 @@ _srcdir="linux-$pkgver-sm6350"
 # repository, and a git source bought immunity to it at the price of a ~6 GB
 # --mirror clone on every build host, in place of one 266 MB download.
 #
-# The tarball is kept for what the checksum below is: pmaports' published
-# sha512 for this exact tag, copied rather than computed. A build that passes
-# it has provably the same bytes postmarketOS builds and tests. A commit pin
-# proves the tree is what its id names -- true, and the weaker claim, because
-# it ties this package to GitHub rather than to pmOS.
+# While the pin was the v7.2.0-sm6350 tag, the checksum below was pmaports'
+# published sha512 for that tag, copied rather than computed, so a passing
+# build had provably the bytes postmarketOS builds. The pin is now a commit on
+# sm6350-7.2.y that no tag (and so no pmaports release) carries, so that claim
+# is not available: the sha512 is ours, measured on the archive of
+# kernel-commit (2026-10-08, HTTP 200, 266049255 bytes). What it proves is that
+# the download is the archive of that commit, whose id pins the tree. Go back
+# to the tag and pmaports' checksum once a tag contains this commit.
 #
-# manifest.toml still records kernel-commit beside kernel-ref, so if the limit
-# returns this is a two-line change and the pin is already resolved.
-source=("linux-$_tag.tar.gz::$_url/archive/$_tag/linux-$_tag.tar.gz"
+# If the 429 window returns, switch this entry to
+# "git+$_url#commit=$_commit" -- the pin is already a commit.
+source=("linux-$_commit.tar.gz::$_url/archive/$_commit.tar.gz"
         'config'
         'config.debug'
         '0000-fp4-mic-dt.patch'
@@ -162,17 +164,16 @@ source=("linux-$_tag.tar.gz::$_url/archive/$_tag/linux-$_tag.tar.gz"
         '0004-nfc-st-nci-map-proprietary-RF-0x90-to-MIFARE.patch'
         '0005-nfc-st-nci-restart-the-reference-clock-on-power-up.patch'
         '0006-nfc-st-nci-treat-the-idle-0x7e-read-as-no-data.patch'
-        '0007-d29-geni-force-suspend.patch'
-        '0008-disable-pmk8350-pon.patch')
+        '0007-d29-geni-force-suspend.patch')
 # The config hash is real and IS computed here, because the vendored file is
 # not upstream's -- it is upstream's with SECURITY_LANDLOCK flipped. Upstream's
 # own sha512 was checked against the fetched copy BEFORE that edit and matched
 # (e20a5b49...51631), which is what makes the vendored file traceable to
 # pmaports even though this package no longer downloads anything from them.
-sha512sums=('2247377b260eba48a3bc2840fe8a55cec82c391949b59dc83093af27cdec66245efb8f3c7fc4e105fa8b1da090335cacad8bcc6cfa128dd25ff7b473297f2530'
-            '6988163648f4698a8ada6c1dde1e4878f03520a291c76418dc27dfde2298e5e6688f365b86c33f00786db634b2d00034ce03250fd6e2f717f60ed7c9f9012271'
+sha512sums=('c79d83a9145a71b0486e8911c9db11c266bd4b0ae468818adbe300e90e5fabeecd4b0a827a99148e88855cf47bdac42bb8d90b2c2589f6136edcbce824100a6f'
+            'ce233f69b5cbc35878e6895e5433b280055623975f35eecfeae6b8730db418ab89d7649027173816fe57d41b88eb4f2621a91366d1bb1837eff8654feb0dda02'
             '2ae75b0c62247abfca811d2c3ce1ae94f5b2dbadcd486f7936b050b7ec36dc3737db09acf63e60e1123eb1e3261faca515ca6d20448852f4311039d002661976'
-            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 # Do not build this on a case-insensitive filesystem -- the kernel carries both
 # net/netfilter/xt_TCPMSS.c and xt_tcpmss.c, and APFS keeps one of them. The
@@ -243,10 +244,11 @@ build() {
 
   # Without these the kernel bakes in the build host and the wall clock, and
   # the host is the BUILD CONTAINER'S ID -- a fresh random hex string every
-  # run. The timestamp is the PINNED TAG and not a date: makepkg sets
+  # run. The timestamp is the PIN and not a date: makepkg sets
   # SOURCE_DATE_EPOCH to the moment this build started, so using it makes two
-  # builds six minutes apart differ by exactly six minutes. A tag involves no
-  # clock at all.
+  # builds six minutes apart differ by exactly six minutes. A pin involves no
+  # clock at all. It is ref@commit (e.g. sm6350-7.2.y@5ba18a1da713), so
+  # `uname -v` on the phone says exactly which kernel source it is running.
   #
   # This does not make the package byte-reproducible, and cannot: with
   # CONFIG_MODULE_SIG=y and an autogenerated signing key the kernel mints an
@@ -255,7 +257,7 @@ build() {
   # reasons not to "fix" it.
   export KBUILD_BUILD_HOST=moarchy
   export KBUILD_BUILD_USER=moarchy
-  export KBUILD_BUILD_TIMESTAMP="$_tag"
+  export KBUILD_BUILD_TIMESTAMP="$_tag@${_commit:0:12}"
 
   make ARCH=arm64 LLVM=1 -j"$(nproc)" Image.gz modules dtbs
 }

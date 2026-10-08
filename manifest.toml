@@ -593,39 +593,54 @@ ucm-ref       = "1e39c9fce12cb521bb53a6422532822b2e4faa10"
 # firmware upstream ships whole .mbn files and needs no merging.
 exclusive-packages = "linux-moarchy-sm6350 firmware-moarchy-fp4 moarchy-device-fp4 pil-squasher"
 # github.com/sm6350-mainline/linux -- mainline plus the SM6350/SM7225
-# enablement that has not landed yet. v7.2.0-sm6350 is the newest tag (checked
-# against the GitHub tag list, not against a wiki) and is what pmaports pins.
+# enablement that has not landed yet.
+#
+# PINNED TO A BRANCH COMMIT, NOT A TAG (2026-10-08). v7.2.0-sm6350 is still the
+# newest tag and is what pmaports pins, but the maintainer has since landed
+# fixes on sm6350-7.2.y that this phone needs and that no tag carries yet:
+# b8e6fa9877f6 (memory-region for the ADSP audio PD -- the candidate fix for
+# D31), 844d77d0bf8d (disable PMK8350 PON, which replaces our own 0008 patch),
+# 5ba18a1da713 (our camss CSI PHY supply fix, PR #15), the PM6350 regulator
+# supply names, and the switch of the touchscreen from the downstream hxchipset
+# driver to mainline himax_hx83112b (which the vendored config had to follow --
+# see the PKGBUILD). When a v7.2.x-sm6350 tag contains this commit, move back to
+# the tag.
+#
+# kernel-ref names the branch the commit was taken from; kernel-commit is what
+# is built. kernel-version is the kernel's own version at that commit (the
+# Makefile's 7.2.0), recorded explicitly because a branch name cannot supply it
+# the way a tag did.
 #
 # A GitHub tarball, so the URL shape differs from sargo's GitLab one and the
-# PKGBUILD cannot share a template with linux-moarchy-sdm670. Recorded as the
-# full archive URL for that reason.
-kernel-url    = "https://github.com/sm6350-mainline/linux"
-kernel-ref    = "v7.2.0-sm6350"
-# The commit that tag points at, and what the PKGBUILD actually checks out.
+# PKGBUILD cannot share a template with linux-moarchy-sdm670.
+kernel-url     = "https://github.com/sm6350-mainline/linux"
+kernel-ref     = "sm6350-7.2.y"
+kernel-version = "7.2.0"
+# The commit the PKGBUILD actually fetches, as GitHub's archive of that commit
+# (/archive/<sha>.tar.gz). A commit id cannot move, because it is derived from
+# the tree it names, so this pin is exact even though kernel-ref is a branch
+# that will keep moving. The PKGBUILD's sha512 for the archive is computed by
+# us (pmaports publishes none for a branch commit) and guards the transfer.
 #
-# It fetches over GIT rather than as a release tarball, and that is forced
-# rather than chosen: GitHub rate-limits tarball downloads per source network
-# (`HTTP 429` from both codeload and the /archive path, for hours), while the
-# git endpoint keeps serving. A build that cannot fetch its kernel is not a
-# build, so the transport that works is the one used.
-#
-# Pinning the commit as well as the tag is strictly stronger than the tarball
-# checksum it replaces: a tag can be moved, a commit id cannot, because it is
-# derived from the tree it names. Resolved with `git ls-remote --tags` against
-# the tag above; if the two ever disagree, the tag moved and this is what
-# stops the build rather than a hash mismatch nobody can explain.
-kernel-commit = "6f7453cecfda8794cd101bb1b3bab064e245e2a8"
+# Transport note: GitHub has rate-limited archive downloads before (HTTP 429
+# for hours, see the PKGBUILD). If that recurs, the fallback is a git source
+# with #commit=<this>, which this pin already supports.
+kernel-commit  = "5ba18a1da7133a04fa9bf5c1b5cde3e718d7c41b"
 
 # Where the kernel config is vendored FROM, on the same terms as sargo's: not
 # fetched at build time, so a build needs no network to know what it compiles.
 #
 # The vendored copy was verified byte-for-byte against upstream before being
 # modified -- its sha512 matched the one pmaports publishes in the kernel
-# APKBUILD's sha512sums. The ONE symbol changed afterwards is SECURITY_LANDLOCK,
+# APKBUILD's sha512sums. The first symbol changed afterwards is SECURITY_LANDLOCK,
 # and pkgbuilds/linux-moarchy-sm6350/PKGBUILD says why at length. It is the
 # same one-symbol change linux-moarchy-sdm670 carries, for the same reason, and
 # finding it already wrong here is the evidence that it is an Alpine-vs-Arch
-# difference and not an SDM670 quirk.
+# difference and not an SDM670 quirk. Changed since, each for a reason recorded
+# in git: NFC enabled for the PR #14 backport, and (2026-10-08, with the move to
+# sm6350-7.2.y) the downstream TOUCHSCREEN_HIMAX_CHIPSET block replaced by
+# TOUCHSCREEN_HIMAX_HX83112B=y, mirroring upstream's fp4_defconfig, because that
+# commit deletes the downstream driver.
 config-url    = "https://gitlab.postmarketos.org/postmarketOS/pmaports"
 config-ref    = "main"
 config-path   = "device/community/linux-postmarketos-qcom-sm6350/config-postmarketos-qcom-sm6350.aarch64"

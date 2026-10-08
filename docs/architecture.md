@@ -48,7 +48,7 @@ Items in `[brackets]` are built or patched in this project.
 | Origin | What it provides | Source |
 | --- | --- | --- |
 | **Arch Linux ARM** | The actual distribution: base userland, Hyprland, quickshell, Qt6, camera app | `menci/archlinuxarm` + `archmobile.mirror.danctnix.org` |
-| **Kernel source** | Mainline Linux with the SM6350 out-of-tree patch set | `github.com/sm6350-mainline/linux` (`v7.2.0-sm6350`) |
+| **Kernel source** | Mainline Linux with the SM6350 out-of-tree patch set | `github.com/sm6350-mainline/linux` (`sm6350-7.2.y` @ `5ba18a1da713`, see `manifest.toml`) |
 | **postmarketOS** | Not the OS here — the kernel `.config` and three modem/call daemons | `gitlab.postmarketos.org` (pmaports, q6voiced, 81voltd, bootmac) |
 | **linux-msm** | Qualcomm's upstream Linux team: modem/DSP plumbing every msm phone needs | `github.com/linux-msm` (qrtr, rmtfs, tqftpserv, qbootctl, pil-squasher) |
 | **Omarchy + moarchy** | The desktop identity (Omarchy) and its mobile port with the phone shell | `basecamp/omarchy` · `github.com/SimonSchubert` |
