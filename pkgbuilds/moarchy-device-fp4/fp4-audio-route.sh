@@ -57,7 +57,17 @@ ROUTES=(
     "MultiMedia2 Mixer TX_CODEC_DMA_TX_3|1"   # capture:  mic -> MultiMedia2
     "QUIN_MI2S_RX Audio Mixer MultiMedia1|1"  # playback: MultiMedia1 -> amps
     "ADC1 Switch|1"                           # the codec's AMIC1 input
+)
 
+# Call audio, kept OUT of ROUTES on purpose. These controls belong to the
+# DSP's voice services, which register separately from the media ones and can
+# be later or absent (seen 2026-10-08: after an ADSP restart the media
+# controls returned but these five did not). While they were in ROUTES, one
+# missing voice control made assert_routes() report "card not up", so the mic
+# and speaker routes were not armed for 30 s -- long enough for WirePlumber to
+# fail its node creation for the whole session. Now they are armed best-effort:
+# a missing one is skipped and retried on every later event.
+VOICE_ROUTES=(
     # Call audio. These connect the DSP's voice session to the same backends
     # the media path uses: the microphone on TX_CODEC_DMA_TX_3 for uplink, the
     # amplifiers on QUIN_MI2S_RX for downlink.
@@ -87,18 +97,24 @@ ROUTES=(
 
 get() { amixer -c "$CARD" cget name="$1" 2>/dev/null | sed -n 's/^  : values=//p' | head -1; }
 
+# set_route NAME|VALUE -- arm one route; returns 1 if the control is absent.
+set_route() {
+    local name=${1%|*} want=${1#*|} cur
+    cur=$(get "$name")
+    [ -z "$cur" ] && return 1
+    case "$cur" in
+        on|"$want") ;;
+        *) amixer -c "$CARD" cset name="$name" "$want" >/dev/null 2>&1 ;;
+    esac
+}
+
+# Media routes gate ("card not up yet" until every one of them is readable);
+# voice routes are best-effort and never hold the media path back.
 assert_routes() {
-    local r name want cur
-    for r in "${ROUTES[@]}"; do
-        name=${r%|*}; want=${r#*|}
-        cur=$(get "$name")
-        [ -z "$cur" ] && return 1                    # card not up yet
-        case "$cur" in
-            on|"$want") ;;
-            *) amixer -c "$CARD" cset name="$name" "$want" >/dev/null 2>&1 ;;
-        esac
-    done
-    return 0
+    local r ok=0
+    for r in "${ROUTES[@]}"; do set_route "$r" || ok=1; done
+    for r in "${VOICE_ROUTES[@]}"; do set_route "$r" || true; done
+    return $ok
 }
 
 # Wait for the card, then arm the routes.
@@ -109,7 +125,24 @@ until assert_routes; do
 done
 
 if [ "${1:-}" != "--watch" ]; then
-    for r in "${ROUTES[@]}"; do printf '%s = %s\n' "${r%|*}" "$(get "${r%|*}")"; done
+    for r in "${ROUTES[@]}" "${VOICE_ROUTES[@]}"; do printf '%s = %s\n' "${r%|*}" "$(get "${r%|*}")"; done
+    exit 0
+fi
+
+# WirePlumber never retries a node it failed to create. If it got to the card
+# before the routes above were armed (a slow boot, 2026-10-08: "Failed to
+# create ALSA node ... Object activation aborted"), the card has no sink and no
+# source for the whole session. The routes are armed now, so one WirePlumber
+# restart creates the nodes. Once per session only: this unit is PartOf
+# wireplumber, so that restart restarts this script as well, and the marker in
+# the (per-boot) runtime dir stops it from doing it again.
+mark="${XDG_RUNTIME_DIR:-/tmp}/fp4-audio-route.wp-restarted"
+sleep 3   # let WirePlumber finish creating nodes on a normal boot first
+if ! pactl list short sources 2>/dev/null | grep -q 'alsa_input\.platform-sound' \
+   && [ ! -e "$mark" ]; then
+    : > "$mark"
+    echo "card has no PipeWire nodes; restarting wireplumber once" >&2
+    systemctl --user restart wireplumber
     exit 0
 fi
 

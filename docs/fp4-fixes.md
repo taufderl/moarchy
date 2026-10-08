@@ -1649,6 +1649,26 @@ Three faults, stacked, every one of them hidden on the development phones:
    Fix: added to the helper and to the UCM `Mic` sequence (verified via
    `alsaucm` from a clean state).
 
+Two boot-ordering faults surfaced in the reboot loop that verified the above:
+
+4. **WirePlumber never retries a node it failed to create.** If it reaches
+   the card before the routes are armed (one boot in four in the loop), the
+   card has no sink and no source for the whole session. Fix: once the routes
+   are armed, the helper checks for the card's PipeWire source and, if it is
+   missing, restarts WirePlumber -- once per session, guarded by a marker in
+   the runtime dir, since the helper is PartOf wireplumber and is restarted
+   with it. Verified by forcing the race (routes cleared, WirePlumber
+   restarted): nodes failed, the helper restarted WirePlumber once, 1 sink and
+   1 source came up, capture followed a stimulus.
+5. **Missing call-audio controls blocked the media routes.** The five voice
+   controls (`VoiceMMode1 ...`, `CS-Voice ...`, `VoiceMMode1 TX Topology`)
+   belong to the DSP's voice services, which can register later than the media
+   ones or not at all (absent after a D31 ADSP restart). They sat in the same
+   list as the mic and speaker routes, so one absent voice control made the
+   helper report "sound card did not appear" for its full 30 s and arm nothing.
+   Fix: the voice routes are a separate, best-effort list -- skipped when
+   absent, retried on every later event -- and only the media routes gate.
+
 **Why it hid:** development phones had `alsa-utils` installed by hand, and with
 it `alsa-restore.service`, which at every boot replayed mixer state saved from
 manual test sessions -- state that happened to contain all of the above,
