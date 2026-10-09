@@ -354,7 +354,7 @@ Three ramdumps in about 13 reboots in one session, all from a plain
   crashed kernels never printed the populate lines, so the hang is in the
   MDSS probe before `of_platform_populate` (clock/GDSC/interconnect bring-up
   and the first MDSS register reads) or on another CPU in the same window.
-- **Third capture (run 4, boot 2): same last line again, 3 of 3.** The printk
+- **Third capture (run 4, boot 2): same last line again; run 4 ended at 6 ramdumps in 24 boots, so 8 of 8 captures total end on the `gmu` line.** The printk
   ring (`__log_buf`, phys `0xa3d72e80`, 128 KiB on 7.2.0-11) was also read
   from the ramdump: it holds *less* than the ramoops console (it ends at the
   `gpu` line), because it is cached memory and a watchdog bite does not write
