@@ -321,9 +321,15 @@ Three ramdumps in about 13 reboots in one session, all from a plain
   journal cannot see.
 - **The crashing boot's state cannot be read from the journal** (journald dies
   at "Sending SIGTERM to remaining processes"; good and bad shutdown logs end
-  identically). Hence ramoops, now applied: kernel package pkgrel 11 reserves
-  `ramoops@b0000000` (1 MiB) and enables `PSTORE_RAM/_CONSOLE/_PMSG`; after the
-  next episode the crashed kernel's console tail is in `/sys/fs/pstore/`.
+  identically). Hence ramoops, now applied: kernel package pkgrel 11 enables
+  `PSTORE_RAM/_CONSOLE/_PMSG`; after the next episode the crashed kernel's
+  console tail is in `/sys/fs/pstore/`.
+- **The region is upstream's, not ours.** The 7.2.y `sm6350.dtsi` already
+  reserves `ramoops@ffc00000` (1 MiB, `no-map`, console 256 KiB, pmsg 128 KiB,
+  ecc 16); only the config was missing. Pkgrel 11 as first built also carried a
+  `ramoops@b0000000` node: on the handset the `ffc00000` instance registered as
+  the pstore backend and ours failed probe with `-22` ("already initialized").
+  The patch is dropped; the config switches alone are the fix.
 
 ### Instrumentation to diagnose it (prepared 2026-09-26, applied 2026-10-09 as kernel pkgrel 11)
 
@@ -387,8 +393,6 @@ bootloader (XBL/ABL) choosing EDL *before* the kernel, which ramoops cannot see;
 a full diagnosis may also need the **PMIC PON/POFF warm-boot-reason register**
 surfaced (a separate, complementary lead). Ship ramoops as the cheap first
 instrument and read `/sys/fs/pstore/` after the next episode.
-
-### Recovering without touching the phone
 
 ### Recovering without touching the phone
 
