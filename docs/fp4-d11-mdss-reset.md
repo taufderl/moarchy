@@ -163,9 +163,39 @@ running; it just must not be asserted under a live scanout.
 
 ## Fix
 
-Status: in progress. The approach: before asserting the MDSS core reset, stop
-the scanout and let in-flight fetches drain. See the defect entry for the
-current state of the patch and its test results.
+Status: **written, under test** (2026-10-10). Kernel branch
+`d11-mdss-quiesce` in the worktree `~/Personal/linux-d11-fix` (commit
+"drm/msm/mdss: stop the bootloader's scanout before resetting MDSS", on top of
+the shipped `5ba18a1` plus the package patches 0000-0007).
+
+What it does, in `msm_mdss_init()`:
+
+1. The reset moves from the very top to after the clocks are parsed.
+2. `clk_bulk_prepare_enable()` on the MDSS clocks (`iface` = GCC_DISP_AHB,
+   `bus` = GCC_DISP_AXI, `core` = DISP_CC_MDSS_MDP), so the DPU registers are
+   reachable.
+3. New `dpu_quiesce_bootloader_scanout()` (dpu_kms.c): finds the DPU child
+   node via `dpu_dt_match`, maps its `mdp` region, and for every catalog INTF
+   whose `INTF_TIMING_ENGINE_EN` (offset 0x000) is set, clears it. It waits 70
+   ms (the disable latches at the next vsync, as in
+   `dpu_encoder_phys_vid_disable()`), then logs
+   `stopped bootloader scanout on intf_N (frame count A -> B, idle|STILL
+   RUNNING)`, checking that `INTF_FRAME_COUNT` (0x0ac) no longer advances.
+   On the FP4 the splash runs on `intf_1` (DSI0, base 0x6a800); the panel is
+   video mode (`MIPI_DSI_MODE_VIDEO`), so the scanout is continuous.
+4. `msm_mdss_reset()` as before, then the clocks are released.
+
+Build: package config with `LOCALVERSION_AUTO` off (so a git checkout still
+reports `7.2.0` and the on-disk modules load), `make ARCH=arm64 LLVM=1
+LOCALVERSION= Image.gz`. Local differences from the CI kernel are toolchain-only
+(clang 22 vs 23; `pahole` present, so `DEBUG_INFO_BTF=y` and a 5 MB larger
+Image); the DTB is the CI image's, unchanged, `resets` in place.
+
+Test plan (unattended pipeline): phase A = fix kernel + the dyndbg cmdline (the
+most crash-prone configuration, ~3 in 5 before), 20 boots; phase B = fix kernel
++ normal cmdline, 25 boots. Every boot must show no ramdump, the quiesce message
+with `idle`, and zero `cmd dma tx failed`. Any failure restores the stable
+image.
 
 ## Operational lessons from the day
 

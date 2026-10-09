@@ -8,6 +8,9 @@
 #
 #   PHONE_IP=192.168.3.x scripts/d11/reboot-loop.sh [N] [OUTDIR]
 #
+# CHECK_CMD, if set, runs on the phone after every boot and its output is
+# printed on the boot's line (e.g. grep the journal for a fix's log message).
+#
 # The dumps contain the kernel command line (device serial, MACs): keep OUTDIR
 # out of the repo.
 set -u
@@ -48,6 +51,7 @@ wait_up || { echo "phone not reachable"; exit 1; }
 for i in $(seq 1 "$N"); do
   s 'sudo -n systemctl reboot'; sleep 10; CRASHED=0
   wait_up || { echo "boot $i: not back after 10 min"; exit 1; }
-  if [ $CRASHED = 1 ]; then echo "boot $i: CAME BACK VIA RAMDUMP"; pull after-ramdump; else echo "boot $i: clean"; pull clean; fi
+  chk=""; [ -n "${CHECK_CMD:-}" ] && { sleep 20; chk=" | $(s "$CHECK_CMD" | tr '\n' ' ')"; }
+  if [ $CRASHED = 1 ]; then echo "boot $i: CAME BACK VIA RAMDUMP$chk"; pull after-ramdump; else echo "boot $i: clean$chk"; pull clean; fi
 done
 echo "LOOP DONE: $N boots, $RD ramdump(s); dumps in $OUT"
