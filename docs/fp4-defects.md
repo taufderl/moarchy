@@ -354,8 +354,19 @@ Three ramdumps in about 13 reboots in one session, all from a plain
   crashed kernels never printed the populate lines, so the hang is in the
   MDSS probe before `of_platform_populate` (clock/GDSC/interconnect bring-up
   and the first MDSS register reads) or on another CPU in the same window.
-  Next capture also reads the printk ring (`__log_buf`, phys `0xa3d72e80`,
-  128 KiB) from the ramdump, for lines logged but never printed.
+- **Third capture (run 4, boot 2): same last line again, 3 of 3.** The printk
+  ring (`__log_buf`, phys `0xa3d72e80`, 128 KiB on 7.2.0-11) was also read
+  from the ramdump: it holds *less* than the ramoops console (it ends at the
+  `gpu` line), because it is cached memory and a watchdog bite does not write
+  the caches back, while ramoops maps its region uncached. So ramoops is the
+  faithful record and nothing was logged after the `gmu` line: the whole SoC
+  froze there (consistent with a wedged interconnect stalling every CPU).
+  Prime suspect: `mdss_probe` -> `msm_mdss_init` -> `msm_mdss_reset()` asserts
+  `DISP_CC_MDSS_CORE_BCR` as its very first action, while the bootloader's
+  splash is still scanning out (simpledrm still owns the framebuffer); a bus
+  master reset mid-transfer can hang the NoC. Unproven: next step is a boot
+  with `dyndbg` on `drivers/base/dd.c` (per-device probe start) and
+  `msm_mdss.c`, plus `ignore_loglevel`, to see which probe is in flight.
 - **Warm-reboot pstore is unreliable here:** after a *clean* reboot,
   `console-ramoops-0` came back with `ECC: 873 unrecoverable blocks`, so
   something between kernels (bootloader) scribbles on `0xffc00000`. Reading
