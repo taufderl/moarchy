@@ -385,6 +385,26 @@ Three ramdumps in about 13 reboots in one session, all from a plain
   repack of the unmodified DTB is byte-identical to the flashed image), which
   makes `msm_mdss_reset()` a no-op. Prediction: zero ramdumps over a loop that
   hit ~1 in 2-4 boots on the dyndbg kernel.
+- **RESULT: 20 of 20 boots clean, 0 ramdumps (2026-10-09).** With the reset
+  present the same kernel+cmdline crashed 3 times in its first ~5 boots (and the
+  plain cmdline 6 in 24, ~1 in 4); 20 clean in a row is ~0.3% likely at 1 in 4.
+  **D11 root cause: the MDSS core reset in `msm_mdss_init()` freezes the SoC
+  when it lands on the bootloader's live splash scanout.** But the reset is
+  load-bearing: without it the panel never comes up (backlight on, nothing
+  drawn; `dsi_cmds2buf_tx: cmd dma tx failed ... ret=-110`, `panel-himax-hx83112a
+  ... sending dcs data b9 83 11 2a failed: -110`). Side effect worth noting: the
+  `DSI PLL(0) lock failed` + `already disabled` WARN seen on every normal boot
+  is absent without the reset. So the fix is not "drop the reset" but "make the
+  reset safe": quiesce the scanout (stop the INTF timing engine / CTL so no
+  fetch is in flight) before asserting `DISP_CC_MDSS_CORE_BCR`, or otherwise get
+  the splash out of the way first. Context: the reset came from Bjorn Andersson's
+  2022 "drm/msm/dpu: Issue MDSS reset during initialization"; a 2025 MSM8939
+  thread notes a live splash used to be masked by `DRM_MSM=m` because pre-6.17
+  the MDSS power domain dropped before the module loaded. This kernel has
+  `DRM_MSM=y` on 7.2. The phone is back on the stable boot.img (reset in place),
+  so D11 still occurs on it at the old rate.
+
+**Status: ROOT CAUSE FOUND -- fix not yet written.**
 - **Warm-reboot pstore is unreliable here:** after a *clean* reboot,
   `console-ramoops-0` came back with `ECC: 873 unrecoverable blocks`, so
   something between kernels (bootloader) scribbles on `0xffc00000`. Reading
