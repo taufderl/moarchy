@@ -78,7 +78,9 @@ pkgver=$_ver
 #   routes incl. ADC1_MIXER Switch; UCM Mic gains it too (D32).
 # pkgrel 8: route helper survives boot races -- voice routes best-effort,
 #   one WirePlumber restart if its nodes failed (D32 items 4-5).
-pkgrel=8
+# pkgrel 9: pd-mapper-softdep.conf -- qrtr/qrtr_smd/qcom_pd_mapper load before
+#   qcom_q6v5_pas so the ADSP never boots ahead of its PD locator (D31).
+pkgrel=9
 pkgdesc="Fairphone 4 (fp4) hardware support for moarchy"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
@@ -155,9 +157,10 @@ source=('hypr-device.lua' 'device.conf'
         '53-fp4-ucm.conf' 'moarchy-fp4-mic-route.service'
         'fp4-audio-route.sh' 'q6voiced.conf'
         'wifi-powersave.conf'
+        'pd-mapper-softdep.conf'
         '82-fp4-serial-wakeup.rules')
 sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
-            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 package() {
   install -Dm644 "$srcdir/device.conf" "$pkgdir/usr/share/moarchy/device/device.conf"
@@ -311,4 +314,8 @@ package() {
   # per-connection key so it holds for every network the user ever joins.
   install -Dm644 "$srcdir/wifi-powersave.conf" \
     "$pkgdir/usr/lib/NetworkManager/conf.d/90-moarchy-fp4-wifi-powersave.conf"
+  # Load qrtr, qrtr_smd and qcom_pd_mapper before the remoteproc driver, so the
+  # ADSP finds the PD locator when it boots instead of racing it (D31).
+  install -Dm644 "$srcdir/pd-mapper-softdep.conf" \
+    "$pkgdir/usr/lib/modprobe.d/moarchy-fp4-pd-mapper.conf"
 }

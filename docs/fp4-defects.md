@@ -26,7 +26,7 @@ configuring. `WONTFIX` — understood and deliberately left.
 | [D23](#d23) | The camera's CSI PHY supplies are undescribed, and a clock sticks on | **OPEN** |
 | [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). Fixed by mainline `d0cd9c8d0fd5` (qcom-geni force-suspend), VALIDATED on FP4 (holds 21s). udev rule is the stopgap until the kernel carries it. Deep-collapse depth cap is a separate open bug | **abort FIXED (mainline fix validated); depth open** |
 | [D30](#d30) | The quickshell before-sleep lock traps a locked-password account: it asks PAM, a locked password can never authenticate, so the first sleep locks the user out | **OPEN — important** |
-| [D31](#d31) | Some boots have no sound card: the ADSP runs but its APR audio services never register, so the LPASS clocks and LPI pinctrl never appear. Recoverable without a reboot by restarting the ADSP | **OPEN -- important** |
+| [D31](#d31) | Some boots have no sound card: the ADSP booted before the PD locator it queries (qcom_pd_mapper) was loaded. Fix applied (modprobe softdep), verifying over more boots | **FIX APPLIED -- verifying** |
 
 ---
 
@@ -1227,6 +1227,27 @@ this needs a multi-boot count, since the failure is intermittent.
   boot-time race in the audio PD's first start, not a lasting fault, and it
   points at a cheap mitigation (if no card ~90 s after boot, restart the ADSP
   once; the sensor core shares the ADSP, so iio-sensor-proxy blips).
+
+**Root cause (2026-10-09): a module-load race, not the DSP.** On a DSP's
+start, remoteproc adds a "pd-mapper" auxiliary device, and the separately
+loaded `qcom_pd_mapper` module binds to it and starts the service-locator
+(servloc) QMI server that the ADSP firmware queries for its audio PD. The ADSP
+reaches that QMI service over the QRTR link that `qrtr_smd` provides. Nothing
+orders those modules against `qcom_q6v5_pas` (no softdep anywhere upstream);
+udev loads them on demand. Measured with the `module_load` tracepoint, armed
+before udev coldplug, on 6 boots: `qcom_pd_mapper` loaded **40-235 ms after**
+"adsp is now up" every time, and `qrtr_smd` after it too. The ADSP usually
+waits long enough; when it does not, its audio services never register (no
+APR devices, no `ssctl`) and there is no card.
+
+**Fix:** `softdep qcom_q6v5_pas pre: qrtr qrtr_smd qcom_pd_mapper`
+(moarchy-device-fp4, `/usr/lib/modprobe.d/moarchy-fp4-pd-mapper.conf`), so
+modprobe/udev load them before the remoteproc driver. Verified on hardware:
+across 10 reboots the order flipped to `qrtr_smd` and `qcom_pd_mapper` loading
+~150-250 ms **before** "powering up adsp", and all 10 boots had the sound card.
+No ADSP restart, so call audio is untouched. Before the fix D31 hit roughly
+one boot in 10-15, so 10 clean boots supports the fix but does not yet prove it;
+it moves to fp4-fixes.md after more boots in normal use.
 
 **Workaround:** reboot, or restart the ADSP as above. **Diagnose a bad boot:** `lsmod | grep -E 'q6afe|apr'`
 (apr present, q6afe absent = this defect) and
