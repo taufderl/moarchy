@@ -330,6 +330,36 @@ Three ramdumps in about 13 reboots in one session, all from a plain
   `ramoops@b0000000` node: on the handset the `ffc00000` instance registered as
   the pstore backend and ours failed probe with `-22` ("already initialized").
   The patch is dropped; the config switches alone are the fix.
+- **First captured crash (2026-10-09, 20-boot loop):** 3 ramdumps in a row
+  during boot 3, each ~24 s after reset with no USB gadget in between (an
+  early-boot crash loop; `edl-reset` recovered it on the 5th try). RAM survives
+  the bite, so the ramoops region was read straight out of the ramdump over
+  Sahara (`MEMORY_READ_64` of `0xffc00000`, 1 MiB). The crashed kernel's console
+  ends at **0.71 s**, after `arm-smmu 3d40000.iommu` (the Adreno SMMU) probes
+  and `3d00000.gpu`/`3d6a000.gmu` join iommu groups: no panic, no oops, then
+  silence until the watchdog bites, i.e. a hard bus hang. On a good boot the
+  next lines (0.725 s) are the display takeover from the bootloader's
+  framebuffer: MDSS/DSI/panel probe, and **every** boot in the journal (25 of
+  25) logs `dsi_pll_10nm_vco_prepare: DSI PLL(0) lock failed` plus a
+  `dsi0_phy_pll_out_dsiclk already disabled` clk warning there. Lead: the
+  crash is the bad side of that DSI PLL / display-handover path.
+- **Second capture, same point (2026-10-09, 20-boot loop, 1 ramdump at boot
+  18):** the console again ends on exactly `3d6a000.gmu: Adding to iommu group
+  12` (0.766 s). Two of two. On a good boot the next lines are MDSS populating
+  its children (the `Fixed dependency cycle(s)` lines for the DPU, DSI and
+  panel), then `dsi_phy_driver_probe` registers its clock provider, the
+  orphaned `disp_cc` byte/pixel clocks (left running by the bootloader's
+  splash) get reparented onto the DSI PLL, the PLL fails to lock and
+  `clk_core_disable` WARNs `dsi0_phy_pll_out_dsiclk already disabled`. The
+  crashed kernels never printed the populate lines, so the hang is in the
+  MDSS probe before `of_platform_populate` (clock/GDSC/interconnect bring-up
+  and the first MDSS register reads) or on another CPU in the same window.
+  Next capture also reads the printk ring (`__log_buf`, phys `0xa3d72e80`,
+  128 KiB) from the ramdump, for lines logged but never printed.
+- **Warm-reboot pstore is unreliable here:** after a *clean* reboot,
+  `console-ramoops-0` came back with `ECC: 873 unrecoverable blocks`, so
+  something between kernels (bootloader) scribbles on `0xffc00000`. Reading
+  the region from the ramdump *before* `edl-reset` is the reliable capture.
 
 ### Instrumentation to diagnose it (prepared 2026-09-26, applied 2026-10-09 as kernel pkgrel 11)
 
