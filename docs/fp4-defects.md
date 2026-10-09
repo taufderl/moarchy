@@ -367,6 +367,24 @@ Three ramdumps in about 13 reboots in one session, all from a plain
   master reset mid-transfer can hang the NoC. Unproven: next step is a boot
   with `dyndbg` on `drivers/base/dd.c` (per-device probe start) and
   `msm_mdss.c`, plus `ignore_loglevel`, to see which probe is in flight.
+- **Pinned to the MDSS probe (2026-10-09, dyndbg boot).** Same kernel, cmdline
+  plus `ignore_loglevel dyndbg="file drivers/base/dd.c +p; file
+  drivers/gpu/drm/msm/msm_mdss.c +p; file drivers/iommu/arm/arm-smmu/arm-smmu.c
+  +p"` (only the boot.img cmdline field patched). 3 ramdumps in the first few
+  boots, all three ending on exactly
+  `ae00000.display-subsystem: really_probe: probing driver msm-mdss with device`
+  -- after the GPU SMMU and `adreno` have both bound -- and none printing
+  `msm_mdss_init`'s `mapped mdss address space`, which a good boot prints next.
+  Between those two points `msm_mdss_init` does only `msm_mdss_reset()`
+  (assert `DISP_CC_MDSS_CORE_BCR`, `msleep(20)`, deassert), a table lookup and
+  an ioremap, so the freeze is in the MDSS core reset, taken while the
+  bootloader's splash is still scanning out. (Journal timestamps cannot resolve
+  the 20 ms hold here: journald reads kmsg late, in batches.)
+- **Deciding test, prepared:** the same boot.img with `resets` deleted from
+  `/soc@0/display-subsystem@ae00000` in the appended DTB (one property; the
+  repack of the unmodified DTB is byte-identical to the flashed image), which
+  makes `msm_mdss_reset()` a no-op. Prediction: zero ramdumps over a loop that
+  hit ~1 in 2-4 boots on the dyndbg kernel.
 - **Warm-reboot pstore is unreliable here:** after a *clean* reboot,
   `console-ramoops-0` came back with `ECC: 873 unrecoverable blocks`, so
   something between kernels (bootloader) scribbles on `0xffc00000`. Reading
