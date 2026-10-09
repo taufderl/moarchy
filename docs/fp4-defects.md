@@ -233,6 +233,10 @@ qmicli, unless MM's location is disabled first.
 
 ## D11 — the phone drops into EDL after repeated reboots {#d11}
 
+**Long form:** [`fp4-d11-mdss-reset.md`](./fp4-d11-mdss-reset.md) -- root cause
+(MDSS core reset on the live splash), the capture method and the tools in
+`scripts/d11/`.
+
 **Status: OPEN as a cause, RECOVERABLE as a symptom.** Leading theory (A/B retry exhaustion) ruled out 2026-09-24. Seen three times on
 2026-09-23. The first two needed a physical power-button hold. The third did
 not, because it no longer has to -- see *Recovering without touching the
