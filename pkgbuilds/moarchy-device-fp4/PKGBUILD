@@ -80,7 +80,10 @@ pkgver=$_ver
 #   one WirePlumber restart if its nodes failed (D32 items 4-5).
 # pkgrel 9: pd-mapper-softdep.conf -- qrtr/qrtr_smd/qcom_pd_mapper load before
 #   qcom_q6v5_pas so the ADSP never boots ahead of its PD locator (D31).
-pkgrel=9
+# pkgrel 10: UCM Earpiece uses aw882xx_pa_switch_r (the old 'Right Speaker
+#   Volume' control does not exist); Speaker re-enables both amps and now
+#   outranks Earpiece, so media defaults to the loudspeaker.
+pkgrel=10
 pkgdesc="Fairphone 4 (fp4) hardware support for moarchy"
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'
