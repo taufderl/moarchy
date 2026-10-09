@@ -292,7 +292,40 @@ processor was not crashing into a debug image. Catching the trigger needs an
 EDL event with early-boot instrumentation, which a random fault makes hard.
 Left open, and cheap to live with now that recovery needs no physical access.
 
-### Instrumentation to diagnose it (prepared 2026-09-26, not yet applied)
+### Findings 2026-10-09 (sm6350-7.2.y kernel)
+
+Three ramdumps in about 13 reboots in one session, all from a plain
+`systemctl reboot`. What is now measured rather than assumed:
+
+- **It IS a ramdump, not plain EDL.** Read on hardware: the device's Sahara
+  `HELLO` reports `mode=2 (MEMORY_DEBUG)` and it serves a memory table (OCIMEM,
+  AOP RAM, PMIC PON history, reset status, and all 6 GiB of DDR in three 2 GiB
+  regions). So the earlier "plain EDL, never a ramdump" above is wrong for these
+  episodes: something crashed, and RAM is preserved.
+- **A watchdog bite produces exactly this.** Opening `/dev/watchdog0` and not
+  feeding it gave `05c6:900e` at 30 s. The FP4's `qcom,kpss-wdt` maxes out at
+  ~31 s (20-bit counter, 32 kHz clock), so systemd-shutdown's 10 min reboot
+  watchdog request fails (`Invalid argument`) and runs at the 30 s default.
+- **Linux cannot turn the ramdump mode off.** `qcom_scm.download_mode` reads
+  `off`, writing `off` succeeds silently, and a bite still gives `900e`: the DT
+  has no `qcom,dload-mode` register and the SCM call has no effect.
+- **The reboot watchdog is not the (only) trigger.** With
+  `RebootWatchdogSec=off` (verified: the previous shutdown never armed it) the
+  second reboot still ended in `900e`. The change was reverted: with remote
+  recovery available (below), a bitten hang is recoverable and an unbitten one
+  is not.
+- **Timing from the host's USB log:** a normal reboot reaches the next boot's
+  USB gadget 31.6 s after the old one disappears; the bad one showed `900e`
+  24.2 s after (a crash surfaces as `900e` within ~3 s), i.e. ~21 s after the
+  gadget dropped -- late in shutdown or early in the next boot, where the
+  journal cannot see.
+- **The crashing boot's state cannot be read from the journal** (journald dies
+  at "Sending SIGTERM to remaining processes"; good and bad shutdown logs end
+  identically). Hence ramoops, now applied: kernel package pkgrel 11 reserves
+  `ramoops@b0000000` (1 MiB) and enables `PSTORE_RAM/_CONSOLE/_PMSG`; after the
+  next episode the crashed kernel's console tail is in `/sys/fs/pstore/`.
+
+### Instrumentation to diagnose it (prepared 2026-09-26, applied 2026-10-09 as kernel pkgrel 11)
 
 The reason the cause stays unidentified is that **nothing captures the moment**:
 `/sys/fs/pstore/` is empty because the RAM backend is off. In the vendored kernel

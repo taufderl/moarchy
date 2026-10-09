@@ -1,0 +1,24 @@
+--- a/arch/arm64/boot/dts/qcom/sm7225-fairphone-fp4.dts
++++ b/arch/arm64/boot/dts/qcom/sm7225-fairphone-fp4.dts
+@@ -148,6 +148,21 @@
+ 			qcom,client-id = <1>;
+ 			qcom,vmid = <QCOM_SCM_VMID_MSS_MSA>;
+ 		};
++
++		/*
++		 * moarchy: pstore/ramoops, so a crash leaves the kernel's console
++		 * tail in /sys/fs/pstore on the next boot (fp4-defects D11). The
++		 * ramdump mode this SoC drops into on a crash keeps RAM, and so does
++		 * the Sahara reset that leaves it. 0xb0000000 is plain HLOS RAM in
++		 * both the downstream and the mainline memory map.
++		 */
++		ramoops@b0000000 {
++			compatible = "ramoops";
++			reg = <0 0xb0000000 0 0x100000>;
++			console-size = <0x40000>;
++			pmsg-size = <0x40000>;
++			record-size = <0x20000>;
++		};
+ 	};
+ 
+ 	msm_therm_sensor: thermal-sensor-msm {
