@@ -29,8 +29,8 @@ cd "$REPO_ROOT"
 
 # moarchy, not alarm. `alarm` is DanctNIX's stock user and was right while this
 # project provisioned on top of their image; the image built here creates
-# `moarchy` and locks both its password and root's, so `alarm` does not exist
-# and publickey is the only way in. The stale default sent a second session
+# `moarchy` (default lock-screen PIN only, D30) and locks root's, so `alarm` does
+# not exist and, with ssh password auth off, publickey is the only way in. The stale default sent a second session
 # hunting for a key that would never work, for an account that was not there.
 PHONE="${PHONE:-moarchy@192.168.0.18}"
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10)
@@ -137,7 +137,7 @@ step_build() {
 
 step_deploy() {
   say "ship the built packages to $PHONE"
-  phone true 2>/dev/null || die "cannot reach $PHONE -- set PHONE=moarchy@<ip>. The account has no password by design, so ssh-copy-id cannot work: authorise a key from the phone's own terminal with ./scripts/authorize-ssh.sh"
+  phone true 2>/dev/null || die "cannot reach $PHONE -- set PHONE=moarchy@<ip>. SSH password auth is off by design, so ssh-copy-id cannot work: authorise a key from the phone's own terminal with ./scripts/authorize-ssh.sh"
 
   # Passwordless sudo, so the install does not stall on a prompt.
   if ! phone 'sudo -n true' 2>/dev/null; then

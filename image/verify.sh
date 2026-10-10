@@ -469,13 +469,31 @@ fi
 sec "credentials -- what must NOT be here"
 u=$(grep -c '^moarchy:' "$R/etc/passwd" 2>/dev/null)
 [ "$u" = 1 ] && ok "user 'moarchy' exists" || no "user 'moarchy' not in /etc/passwd"
-# A locked password is ! or * in the hash field; anything else is a real hash.
+# A locked password is ! or * in the hash field. root must be locked. moarchy
+# carries exactly the documented default PIN (image/configure.sh DEFAULT_PIN,
+# D30): its hash is recomputed from the stored salt, so any OTHER real password
+# still fails here -- that is what image/negative-test.sh plants.
+DEFAULT_PIN=1337
+is_default_pin() {  # $1 = shadow hash field; true if it is DEFAULT_PIN as SHA-512
+  case "$1" in '$6$'*) ;; *) return 1 ;; esac
+  local salt calc
+  salt=$(printf '%s' "$1" | cut -d'$' -f3)
+  [ -n "$salt" ] || return 1
+  calc=$(openssl passwd -6 -salt "$salt" "$DEFAULT_PIN" 2>/dev/null) ||
+    calc=$(perl -e 'print crypt($ARGV[0], $ARGV[1])' "$DEFAULT_PIN" "\$6\$$salt" 2>/dev/null)
+  [ -n "$calc" ] && [ "$calc" = "$1" ]
+}
 for acct in moarchy root; do
   h=$(awk -F: -v a="$acct" '$1==a{print $2}' "$R/etc/shadow" 2>/dev/null)
   case "$h" in
-    '!'*|'*'*|'!') ok "$acct password is locked ($h)" ;;
+    '!'*|'*'*|'!') if [ "$acct" = root ]; then ok "root password is locked ($h)"
+                   else no "moarchy password is LOCKED -- the PIN lock screen can never open (D30)"; fi ;;
     '')            no "$acct has an EMPTY password" ;;
-    *)             no "$acct has a real password hash -- the image ships a credential" ;;
+    *)             if [ "$acct" = moarchy ] && is_default_pin "$h"; then
+                     ok "moarchy has the documented default PIN (D30)"
+                   else
+                     no "$acct has a real password hash -- the image ships a credential"
+                   fi ;;
   esac
 done
 [ -e "$R/etc/moarchy-debug-image" ] && no "this is a DEBUG image -- do not publish" \

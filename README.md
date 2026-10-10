@@ -55,8 +55,10 @@ move and are being corrected.
 
 Download the image for your phone from
 **[Releases](https://github.com/SimonSchubert/moarchy/releases)**. There is no
-installer to run on the device and no default password to change: the account's
-password is locked and tty1 autologin brings the session up without one.
+installer to run on the device. tty1 autologin brings the session up without a
+password; the lock screen's default PIN is **`1337`** -- change it with `passwd`
+in a terminal (it asks for `1337` first). SSH never accepts a password, so the
+public default does not open the phone remotely.
 
 The bootloader must be unlocked. Unpack the sargo archive, put the phone in
 fastboot (power off, hold Volume Down, tap Power), and run `flash.sh`. That
@@ -335,8 +337,8 @@ WIFI_SSID='MyNetwork' WIFI_PSK='secret' \
 
 Both are optional and both mark the image as a debug build. `MOARCHY_SSH_KEY`
 authorises that key for the phone's account and enables `sshd`, which saves the
-round trip through the card that a reflash otherwise costs — the account has no
-password, so there is no other way back in.
+round trip through the card that a reflash otherwise costs -- SSH accepts keys
+only, so there is no other way back in.
 
 Do not publish either. The PSK is a secret; the key is not, but an
 `authorized_keys` in a public image would have every phone that flashes it trust

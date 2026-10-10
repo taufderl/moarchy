@@ -523,13 +523,17 @@ partition it was flashed to on first boot. **Met:**
 > every downloaded package in `/var/cache/pacman/pkg`, 1.26 GiB of it, and
 > sizing the partition before clearing it puts that straight into the download.
 
-**I8** First boot creates the user and ships no default password. **Met, by
-there being no password at all:** the account is created at build time with a
-*locked* password, and root is locked too.
+**I8** First boot creates the user with a documented default PIN, and root is
+locked. **Met, by `image/configure.sh`:** the account gets the PIN `1337`
+(SHA-512) at build time; `image/verify.sh` recomputes the hash and accepts that
+default and nothing else. Until 2026-10-10 the password was *locked*, which the
+PIN lock screen can never accept: the first before-sleep lock trapped the user
+(D30), so the locked-password design was replaced by a public default.
 
-> tty1 autologin does not consult a password, so the phone comes up usable with
-> no secret to leak or change; `sshd` is disabled and password authentication
-> is off if it is enabled, so a locked password cannot be attacked remotely.
+> tty1 autologin does not consult a password, so the phone comes up usable; the
+> default PIN only unlocks the screen of a phone in your hand, because `sshd` is
+> disabled and password authentication is off if it is enabled, so the public
+> default cannot be used remotely. Change it with `passwd`.
 > `sudo` is passwordless for the account, which concedes nothing on a device
 > with no disk encryption — anyone holding the phone can read the card. `passwd`
 > from the phone's own terminal is how a user opts into SSH.
