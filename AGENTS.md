@@ -113,9 +113,9 @@ sm6350-mainline/alsa-ucm-conf#2 (fp4 mic + earpiece).
   env so setlocalversion adds no `+`).
 - **Reaching the phone:** it is on WiFi at a DHCP address (scan `192.168.3.0/24`);
   `ssh -i ~/.ssh/id_claude moarchy@<ip>`, passwordless `sudo -n`. `pacman -Sy`
-  currently fails on the phone because the stale `moarchy-apps` repo db 404s
-  (rename fixed in the manifest, not yet deployed); disable that repo stanza in
-  `/etc/pacman.conf` to install packages, and restore it after.
+  works on images from `fp4` @ `9e118c6` (2026-10-10) on; on older images the
+  stale `moarchy-apps` repo db 404s, so disable that stanza in
+  `/etc/pacman.conf` to install packages and restore it after.
 - **If audio is missing:** look at `/sys/kernel/debug/devices_deferred` first
   (D10: the LPI pinctrl loses a boot race; the fix is `deferred_probe_timeout=60`
   on the cmdline, already in `android-bootimg.sh`).
