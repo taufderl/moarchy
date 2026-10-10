@@ -163,7 +163,7 @@ running; it just must not be asserted under a live scanout.
 
 ## Fix
 
-Status: **written, under test** (2026-10-10). Kernel branch
+Status: **v2 written and tested: reduces but does not remove the hang; v3 under test** (2026-10-10). Kernel branch
 `d11-mdss-quiesce` in the worktree `~/Personal/linux-d11-fix` (commit
 "drm/msm/mdss: stop the bootloader's scanout before resetting MDSS", on top of
 the shipped `5ba18a1` plus the package patches 0000-0007).
@@ -206,6 +206,26 @@ most crash-prone configuration, ~3 in 5 before), 20 boots; phase B = fix kernel
 + normal cmdline, 25 boots. Every boot must show no ramdump, the quiesce message
 with `idle`, and zero `cmd dma tx failed`. Any failure restores the stable
 image.
+
+### Test results so far
+
+| version | change | cmdline | boots | ramdumps | where the crashes froze |
+| --- | --- | --- | --- | --- | --- |
+| baseline | none | normal | 44 (loops 3+4) | 7 (16 %) | MDSS probe |
+| baseline | none | dyndbg | ~5 | 3 | MDSS probe, before `mapped mdss` |
+| v2 | stop CTL-active INTF timing engines, then reset | dyndbg | 20 | **0** | -- |
+| v2 | same | normal | 25 | **2** (8 %) | after `stopped ... idle` and `resetting`: inside the reset |
+| v3 | v2 + disable the DSI host (`DSI_CTRL` was `0x1f7`, video mode) + a log line per reset step | normal | (running) | | |
+
+**v2 is not a fix.** With the scanout verifiably stopped (frame counter frozen,
+`idle`), the reset still froze the SoC twice. So "a live scanout" is at most
+part of the story. v3 adds the DSI host to the quiesce (it keeps running after
+the INTF stops) and logs `reset asserting / asserted / deasserting /
+deasserted`, so the next crash, if any, shows which step freezes.
+
+Ruled out on the way: a wrong reset index. SM6350 maps `DISP_CC_MDSS_CORE_BCR`
+to `0x1000`, directly before the MDSS GDSC at `0x1004` (the usual BCR/GDSCR
+pair, as on SC7280), unlike the SDM845 case where RSCC had been wired by mistake.
 
 ## Operational lessons from the day
 
