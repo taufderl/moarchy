@@ -35,6 +35,7 @@ and several were wrong for a reason that was not the obvious one.
 | [D11](#d11) | The phone dropped into EDL after reboots: the MDSS core reset hung the SoC on the bootloader's running splash | **FIXED** |
 | [D31](#d31) | Some boots had no sound card: the ADSP booted before the PD locator it queries was loaded | **FIXED** |
 | [D28](#d28) | The phone never suspended on idle; idle-suspend now works, the depth problem continues as D29 | **CLOSED, see D29** |
+| [D30](#d30) | The PIN lock screen trapped a locked-password account after a fresh flash; the image now ships the default PIN `1337` | **FIXED** |
 
 ---
 
@@ -2230,3 +2231,62 @@ it moves to fp4-fixes.md after more boots in normal use.
 **Workaround:** reboot, or restart the ADSP as above. **Diagnose a bad boot:** `lsmod | grep -E 'q6afe|apr'`
 (apr present, q6afe absent = this defect) and
 `sudo cat /sys/kernel/debug/devices_deferred` (the 33c0000.pinctrl chain).
+
+## D30 -- the quickshell before-sleep lock traps a locked-password account {#d30}
+
+**Status: FIXED 2026-10-11 (verified on hardware).** A fresh full flash of the
+`fp4` @ `1e1944b` CI image came up with the account usable (`passwd -S` = `P`) and
+its hash equal to the default PIN `1337`, checked over serial before anything was
+restored. The quick-fix notes follow.
+
+**Was: QUICK FIX APPLIED 2026-10-10 -- verify on the next image.** The image
+now ships the account with the documented default PIN `1337` instead of a locked
+password (`image/configure.sh` DEFAULT_PIN; `image/verify.sh` accepts exactly
+that hash and still fails on any other real password; ssh password auth stays
+off, so the public default only unlocks a phone in hand). Hit again on
+2026-10-10 after a full flash of the `9e118c6` CI image: stuck on the lock
+screen, recovered by setting the PIN over SSH (`chpasswd`). For our own full
+flashes the backup kit also restores the shadow hash. Move to fixes once a
+fresh flash of an image with this change unlocks with `1337`.
+
+**Originally: OPEN -- important (found 2026-10-05, on a full flash of the
+`fp4-dev-all` dev image).** After a full flash the account ships with a *locked*
+password (`passwd -S` reports `L`; tty1 autologin does not consult one, by
+design -- see `docs/structure.md` I8 and D-note in `bin/moarchy-system-lock`).
+The quickshell shell's own lockscreen ("omarchy lock", PAM config
+`omarchy-lock-password`) is triggered on `before-sleep` by
+`swayidle -w ... before-sleep moarchy-lock`. It authenticates through PAM, and a
+locked password can never satisfy PAM, so the first time the phone sleeps it puts
+up a PIN/password prompt that **nothing the user types can clear** -- a full
+lockout. `loginctl unlock-sessions` does not dismiss it (the lock is a secure
+ext-session-lock client that only releases on a successful PAM auth), so recovery
+needs the serial console.
+
+This is the *same* trap `bin/moarchy-system-lock` already guards against for the
+swaylock path: it checks `passwd -S` and, when the state is not `P`, blanks the
+panel (`moarchy-screen lock`) instead of taking a real ext-session-lock, exactly
+because "a locked password authenticates nothing". The quickshell before-sleep
+lock path has **no equivalent guard**, so it reintroduces the lockout the shell
+script was written to avoid.
+
+**Recovery (serial):** `printf 'moarchy:<pin>\n' | sudo -n chpasswd` over
+`/dev/ttyACM0`, then type `<pin>` on the lockscreen. (One gotcha while doing
+this: do not leave two `cat /dev/ttyACM0` readers running -- they split the
+byte stream and both the command echo and its output come back garbled.)
+
+**Proper fix, one or both:**
+1. Guard the quickshell / `moarchy-lock` before-sleep path to skip a real lock
+   when `passwd -S "$(id -un)"` is not `P` (blank instead), mirroring
+   `bin/moarchy-system-lock`. This is the robust fix: it makes a locked-password
+   device un-lock-out-able regardless of how the lock is triggered.
+2. Have first-boot setup actually establish a PIN so the password is `P` from the
+   start -- the "setup wizard" that is currently missing. `moarchy-firstboot`
+   (groups/autologin) and `moarchy-user-setup` (app configs/theme) both run and
+   stamp `firstboot-done` / `user-setup-done`, but **neither sets a PIN**, so
+   there is no first-run step that moves the password off `L`. A device left on
+   the shipped locked password is the exact condition that (1) must handle.
+
+Until fixed, any full flash leaves the phone one sleep away from a serial-only
+lockout.
+
+---
