@@ -225,6 +225,7 @@ image.
 | v3, no `resets` | v3 quiesce, reset property deleted | normal | 1 (transient) | 0 | -- but panel dead again: `sending DCS SET_DISPLAY_OFF failed: -110` |
 | v4 | v3 + gate the MDP core and AXI clocks before asserting (AHB is `CLK_IS_CRITICAL`) | normal | 30 | **0** | -- display up and quiesce `idle` on all 30 |
 | v5 | v4 **without** the DSI host disable (INTF stop + clock gating only) | normal | 20 | **0** | -- display up and quiesce `idle` on all 20 |
+| v6 | clock gating **only** (no INTF stop) | normal | 1 (stopped) | 1 | at `reset asserting`, like the baseline |
 
 **v2 is not a fix.** With the scanout verifiably stopped (frame counter frozen,
 `idle`), the reset still froze the SoC twice. So "a live scanout" is at most
@@ -243,7 +244,10 @@ in a row is ~0.5 % likely by chance; against v2's 2 in 25 it is ~8 %, so v4 is
 clearly better than the baseline and very likely better than v2. More boots in
 daily use will tighten that. v5 then dropped the DSI host disable and still ran **20 of 20
 clean**: the clock gating is what matters (v3 had the DSI disable without the
-gating and still hung on the assert). The upstream patch is the v5 logic.
+gating and still hung on the assert). v6 then tried the clock gating alone, under the live scanout: it
+hung on the assert on its first reboot. So both halves are needed (INTF stop
+alone: v2, 2 in 25; gating alone: v6), and the upstream patch is the v5 logic,
+which is minimal.
 
 Ruled out on the way: a wrong reset index. SM6350 maps `DISP_CC_MDSS_CORE_BCR`
 to `0x1000`, directly before the MDSS GDSC at `0x1004` (the usual BCR/GDSCR

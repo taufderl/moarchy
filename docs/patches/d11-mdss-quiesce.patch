@@ -1,4 +1,4 @@
-From 565cceba1a25cbbec53363129a1a62b0016c0151 Mon Sep 17 00:00:00 2001
+From d066270b6ac40d8d53c447bae43faa0e20fcb4e8 Mon Sep 17 00:00:00 2001
 From: Tim auf der Landwehr <tadl-git@taufderl.de>
 Date: Sat, 10 Oct 2026 15:09:21 +0200
 Subject: [PATCH] drm/msm/mdss: quiesce the bootloader's display before
@@ -13,9 +13,10 @@ logged, and the watchdog drops the phone into the Qualcomm ramdump. The
 reset itself is needed: without it the panel never comes up (DSI
 command DMA times out).
 
-Stopping the scanout alone is not enough; the assert still hung with
-the INTF verifiably idle. What made it reliable is to also gate the
-clocks before asserting the reset:
+Neither half alone is enough: stopping the scanout, the assert still
+hung with the INTF verifiably idle; gating the clocks under the live
+scanout, it hung on the first reboot. What made it reliable is both, in
+this order:
 
  - enable the MDSS clocks so the DPU registers are reachable,
  - disable every INTF timing engine that a CTL reports active, and wait
@@ -29,7 +30,8 @@ needs the active-CTL register, so the DPU part is limited to DPU 5.0+.
 
 Tested on the Fairphone 4: 20 of 20 boots clean with this change (and
 30 of 30 with a variant that also disabled the DSI host), where the
-unmodified kernel crashed on 7 of 44 boots.
+unmodified kernel crashed on 7 of 44 boots, the scanout stop alone on 2
+of 25, and the clock gating alone on its first reboot.
 
 Signed-off-by: Tim auf der Landwehr <tadl-git@taufderl.de>
 ---
