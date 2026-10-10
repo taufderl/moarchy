@@ -186,10 +186,20 @@ What it does, in `msm_mdss_init()`:
 4. `msm_mdss_reset()` as before, then the clocks are released.
 
 Build: package config with `LOCALVERSION_AUTO` off (so a git checkout still
-reports `7.2.0` and the on-disk modules load), `make ARCH=arm64 LLVM=1
-LOCALVERSION= Image.gz`. Local differences from the CI kernel are toolchain-only
-(clang 22 vs 23; `pahole` present, so `DEBUG_INFO_BTF=y` and a 5 MB larger
-Image); the DTB is the CI image's, unchanged, `resets` in place.
+reports `7.2.0`) **and `DEBUG_INFO_BTF` off**, then `make ARCH=arm64 LLVM=1
+LOCALVERSION= Image.gz`. Diff the resolved `.config` against the CI kernel's own
+(`scripts/extract-ikconfig` on the CI `Image`) and accept only compiler-version
+lines.
+
+**Trap that cost two attempts (2026-10-10):** a host with `pahole` installed
+silently turns on `DEBUG_INFO_BTF` / `DEBUG_INFO_BTF_MODULES` (CI has no
+pahole, so its kernel has them off). `DEBUG_INFO_BTF_MODULES` adds fields to
+`struct module` (`include/linux/module.h`), so the kernel then rejects *every*
+module on the phone (CI-built) for a `struct module` size mismatch. The phone
+boots to the home screen with no WiFi, no USB gadget and no touch, so it looks
+like a hang from the host side, and with no watchdog bite it is not D11. The
+first unattended run (v1) and the first transient v2 boot both died on this, not
+on the fix.
 
 Test plan (unattended pipeline): phase A = fix kernel + the dyndbg cmdline (the
 most crash-prone configuration, ~3 in 5 before), 20 boots; phase B = fix kernel
