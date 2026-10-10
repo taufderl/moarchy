@@ -3,7 +3,7 @@
 This is the full record of how D11 ("the phone drops into the Qualcomm ramdump
 after reboots") was tracked down on 2026-10-09, so that neither the result nor
 the method has to be rediscovered. The defect entry is
-[`fp4-defects.md#d11`](./fp4-defects.md#d11); this file is the long form.
+[`fp4-fixes.md#d11`](./fp4-fixes.md#d11); this file is the long form.
 
 ## TL;DR
 

@@ -32,6 +32,7 @@ and several were wrong for a reason that was not the obvious one.
 | [D10](#d10) | The LPI pinctrl lost a boot race and took all audio with it | **FIXED** |
 | [mic-cfg](#mic-port-config) | Capture regressed to silence on a wrong SoundWire port config | **FIXED** |
 | [D32](#d32) | A fresh flash had no audio at all: the route helper needed amixer, and nothing set the capture routes | **FIXED** |
+| [D11](#d11) | The phone dropped into EDL after reboots: the MDSS core reset hung the SoC on the bootloader's running splash | **FIXED** |
 
 ---
 
@@ -1678,3 +1679,304 @@ tested on, and could not have worked on any fresh install. The lesson: verify
 audio on a **fresh flash with a clean mixer state**, not on a phone that has
 been hand-tested.
 
+## D11 — the phone drops into EDL after repeated reboots {#d11}
+
+**Long form:** [`fp4-d11-mdss-reset.md`](./fp4-d11-mdss-reset.md) -- root cause
+(MDSS core reset on the live splash), the capture method and the tools in
+`scripts/d11/`.
+
+**Status: FIXED 2026-10-10.** Root cause: the MDSS core reset in
+`msm_mdss_init()` hangs the SoC when it meets the bootloader's running splash.
+Fixed by kernel package patch `0008` (stop the CTL-active INTF, gate the MDP/AXI
+clocks, then reset; pkgrel 12, `fp4` @ `9e118c6`), verified 20/20 + 10/10 boots on
+the CI-built image (50 clean boots across the fix's test kernels before that).
+Upstream as draft [sm6350-mainline/linux#16](https://github.com/sm6350-mainline/linux/pull/16);
+drop `0008` when the pin includes it. The history below is kept as it was.
+
+**Earlier status (superseded): OPEN as a cause, RECOVERABLE as a symptom.** Leading theory (A/B retry exhaustion) ruled out 2026-09-24. Seen three times on
+2026-09-23. The first two needed a physical power-button hold. The third did
+not, because it no longer has to -- see *Recovering without touching the
+phone* below.
+
+The phone stops booting and appears on the host as
+
+```
+Bus 003 Device 040: ID 05c6:900e Qualcomm, Inc. QUSB_BULK_SN:<serial>
+```
+
+which is the SoC's emergency download mode: powered, enumerating, but running
+no OS. No fastboot, no adb, no network.
+
+### It is not the reboot argument
+
+The first occurrence followed `systemctl reboot --reboot-argument=bootloader`,
+and this entry originally blamed that. **The second occurrence followed an
+ordinary `systemctl reboot`**, so that explanation is wrong and is recorded
+here only because the correction matters.
+
+### Ruled out: an exhausted A/B retry counter
+
+This was the leading theory. It is measured, on 2026-09-24, and it does not
+hold. `qbootctl-mark-successful.service` is active and runs every boot:
+
+```
+qbootctl[556]: SLOT _b: already marked successful
+qbootctl[556]: SLOT _b: Marked boot successful
+systemd[1]: Finished Tell the bootloader this boot worked.
+```
+
+and the slot state is stable across boots:
+
+```
+SLOT _b:  Active: 1   Successful: 1   Bootable: 1
+SLOT _a:  Active: 0   Successful: 1   Bootable: 0
+```
+
+So `qbootctl -m` **does** succeed despite the missing `slot_suffix` -- it takes
+the slot from the partition table instead -- and every boot is marked
+successful. A retry counter that is reset on every boot cannot exhaust. The
+hypothesis is wrong.
+
+There is a real but separate bug here: the boot cmdline carries no
+`androidboot.slot_suffix`, so `qbootctl` logs `Couldn't find cmdline arg` and
+`Unable to read boot slot property` on every run before falling back. It works,
+but blind to what the bootloader actually chose. Worth adding the arg to the
+boot image for correctness; it is not the EDL cause.
+
+### Cause: still unidentified
+
+With retry-exhaustion out, there is no confirmed cause. What the occurrences
+have in common is a session of many reboots around flashing, not ordinary use;
+each was plain EDL (a Sahara `HELLO`), never a ramdump, so the application
+processor was not crashing into a debug image. Catching the trigger needs an
+EDL event with early-boot instrumentation, which a random fault makes hard.
+Left open, and cheap to live with now that recovery needs no physical access.
+
+### Findings 2026-10-09 (sm6350-7.2.y kernel)
+
+Three ramdumps in about 13 reboots in one session, all from a plain
+`systemctl reboot`. What is now measured rather than assumed:
+
+- **It IS a ramdump, not plain EDL.** Read on hardware: the device's Sahara
+  `HELLO` reports `mode=2 (MEMORY_DEBUG)` and it serves a memory table (OCIMEM,
+  AOP RAM, PMIC PON history, reset status, and all 6 GiB of DDR in three 2 GiB
+  regions). So the earlier "plain EDL, never a ramdump" above is wrong for these
+  episodes: something crashed, and RAM is preserved.
+- **A watchdog bite produces exactly this.** Opening `/dev/watchdog0` and not
+  feeding it gave `05c6:900e` at 30 s. The FP4's `qcom,kpss-wdt` maxes out at
+  ~31 s (20-bit counter, 32 kHz clock), so systemd-shutdown's 10 min reboot
+  watchdog request fails (`Invalid argument`) and runs at the 30 s default.
+- **Linux cannot turn the ramdump mode off.** `qcom_scm.download_mode` reads
+  `off`, writing `off` succeeds silently, and a bite still gives `900e`: the DT
+  has no `qcom,dload-mode` register and the SCM call has no effect.
+- **The reboot watchdog is not the (only) trigger.** With
+  `RebootWatchdogSec=off` (verified: the previous shutdown never armed it) the
+  second reboot still ended in `900e`. The change was reverted: with remote
+  recovery available (below), a bitten hang is recoverable and an unbitten one
+  is not.
+- **Timing from the host's USB log:** a normal reboot reaches the next boot's
+  USB gadget 31.6 s after the old one disappears; the bad one showed `900e`
+  24.2 s after (a crash surfaces as `900e` within ~3 s), i.e. ~21 s after the
+  gadget dropped -- late in shutdown or early in the next boot, where the
+  journal cannot see.
+- **The crashing boot's state cannot be read from the journal** (journald dies
+  at "Sending SIGTERM to remaining processes"; good and bad shutdown logs end
+  identically). Hence ramoops, now applied: kernel package pkgrel 11 enables
+  `PSTORE_RAM/_CONSOLE/_PMSG`; after the next episode the crashed kernel's
+  console tail is in `/sys/fs/pstore/`.
+- **The region is upstream's, not ours.** The 7.2.y `sm6350.dtsi` already
+  reserves `ramoops@ffc00000` (1 MiB, `no-map`, console 256 KiB, pmsg 128 KiB,
+  ecc 16); only the config was missing. Pkgrel 11 as first built also carried a
+  `ramoops@b0000000` node: on the handset the `ffc00000` instance registered as
+  the pstore backend and ours failed probe with `-22` ("already initialized").
+  The patch is dropped; the config switches alone are the fix.
+- **First captured crash (2026-10-09, 20-boot loop):** 3 ramdumps in a row
+  during boot 3, each ~24 s after reset with no USB gadget in between (an
+  early-boot crash loop; `edl-reset` recovered it on the 5th try). RAM survives
+  the bite, so the ramoops region was read straight out of the ramdump over
+  Sahara (`MEMORY_READ_64` of `0xffc00000`, 1 MiB). The crashed kernel's console
+  ends at **0.71 s**, after `arm-smmu 3d40000.iommu` (the Adreno SMMU) probes
+  and `3d00000.gpu`/`3d6a000.gmu` join iommu groups: no panic, no oops, then
+  silence until the watchdog bites, i.e. a hard bus hang. On a good boot the
+  next lines (0.725 s) are the display takeover from the bootloader's
+  framebuffer: MDSS/DSI/panel probe, and **every** boot in the journal (25 of
+  25) logs `dsi_pll_10nm_vco_prepare: DSI PLL(0) lock failed` plus a
+  `dsi0_phy_pll_out_dsiclk already disabled` clk warning there. Lead: the
+  crash is the bad side of that DSI PLL / display-handover path.
+- **Second capture, same point (2026-10-09, 20-boot loop, 1 ramdump at boot
+  18):** the console again ends on exactly `3d6a000.gmu: Adding to iommu group
+  12` (0.766 s). Two of two. On a good boot the next lines are MDSS populating
+  its children (the `Fixed dependency cycle(s)` lines for the DPU, DSI and
+  panel), then `dsi_phy_driver_probe` registers its clock provider, the
+  orphaned `disp_cc` byte/pixel clocks (left running by the bootloader's
+  splash) get reparented onto the DSI PLL, the PLL fails to lock and
+  `clk_core_disable` WARNs `dsi0_phy_pll_out_dsiclk already disabled`. The
+  crashed kernels never printed the populate lines, so the hang is in the
+  MDSS probe before `of_platform_populate` (clock/GDSC/interconnect bring-up
+  and the first MDSS register reads) or on another CPU in the same window.
+- **Third capture (run 4, boot 2): same last line again; run 4 ended at 6 ramdumps in 24 boots, so 8 of 8 captures total end on the `gmu` line.** The printk
+  ring (`__log_buf`, phys `0xa3d72e80`, 128 KiB on 7.2.0-11) was also read
+  from the ramdump: it holds *less* than the ramoops console (it ends at the
+  `gpu` line), because it is cached memory and a watchdog bite does not write
+  the caches back, while ramoops maps its region uncached. So ramoops is the
+  faithful record and nothing was logged after the `gmu` line: the whole SoC
+  froze there (consistent with a wedged interconnect stalling every CPU).
+  Prime suspect: `mdss_probe` -> `msm_mdss_init` -> `msm_mdss_reset()` asserts
+  `DISP_CC_MDSS_CORE_BCR` as its very first action, while the bootloader's
+  splash is still scanning out (simpledrm still owns the framebuffer); a bus
+  master reset mid-transfer can hang the NoC. Unproven: next step is a boot
+  with `dyndbg` on `drivers/base/dd.c` (per-device probe start) and
+  `msm_mdss.c`, plus `ignore_loglevel`, to see which probe is in flight.
+- **Pinned to the MDSS probe (2026-10-09, dyndbg boot).** Same kernel, cmdline
+  plus `ignore_loglevel dyndbg="file drivers/base/dd.c +p; file
+  drivers/gpu/drm/msm/msm_mdss.c +p; file drivers/iommu/arm/arm-smmu/arm-smmu.c
+  +p"` (only the boot.img cmdline field patched). 3 ramdumps in the first few
+  boots, all three ending on exactly
+  `ae00000.display-subsystem: really_probe: probing driver msm-mdss with device`
+  -- after the GPU SMMU and `adreno` have both bound -- and none printing
+  `msm_mdss_init`'s `mapped mdss address space`, which a good boot prints next.
+  Between those two points `msm_mdss_init` does only `msm_mdss_reset()`
+  (assert `DISP_CC_MDSS_CORE_BCR`, `msleep(20)`, deassert), a table lookup and
+  an ioremap, so the freeze is in the MDSS core reset, taken while the
+  bootloader's splash is still scanning out. (Journal timestamps cannot resolve
+  the 20 ms hold here: journald reads kmsg late, in batches.)
+- **Deciding test, prepared:** the same boot.img with `resets` deleted from
+  `/soc@0/display-subsystem@ae00000` in the appended DTB (one property; the
+  repack of the unmodified DTB is byte-identical to the flashed image), which
+  makes `msm_mdss_reset()` a no-op. Prediction: zero ramdumps over a loop that
+  hit ~1 in 2-4 boots on the dyndbg kernel.
+- **RESULT: 20 of 20 boots clean, 0 ramdumps (2026-10-09).** With the reset
+  present the same kernel+cmdline crashed 3 times in its first ~5 boots (and the
+  plain cmdline 6 in 24, ~1 in 4); 20 clean in a row is ~0.3% likely at 1 in 4.
+  **D11 root cause: the MDSS core reset in `msm_mdss_init()` freezes the SoC
+  when it lands on the bootloader's live splash scanout.** But the reset is
+  load-bearing: without it the panel never comes up (backlight on, nothing
+  drawn; `dsi_cmds2buf_tx: cmd dma tx failed ... ret=-110`, `panel-himax-hx83112a
+  ... sending dcs data b9 83 11 2a failed: -110`). Side effect worth noting: the
+  `DSI PLL(0) lock failed` + `already disabled` WARN seen on every normal boot
+  is absent without the reset. So the fix is not "drop the reset" but "make the
+  reset safe": quiesce the scanout (stop the INTF timing engine / CTL so no
+  fetch is in flight) before asserting `DISP_CC_MDSS_CORE_BCR`, or otherwise get
+  the splash out of the way first. Context: the reset came from Bjorn Andersson's
+  2022 "drm/msm/dpu: Issue MDSS reset during initialization"; a 2025 MSM8939
+  thread notes a live splash used to be masked by `DRM_MSM=m` because pre-6.17
+  the MDSS power domain dropped before the module loaded. This kernel has
+  `DRM_MSM=y` on 7.2. The phone is back on the stable boot.img (reset in place),
+  so D11 still occurs on it at the old rate.
+
+**(Superseded, see the status at the top.)** The fix (stop the CTL-active INTF, gate
+the MDP/AXI clocks, then reset) ran 20 of 20 boots clean, and a variant that
+also disabled the DSI host 30 of 30; see [`fp4-d11-mdss-reset.md`](./fp4-d11-mdss-reset.md#fix).
+- **Warm-reboot pstore is unreliable here:** after a *clean* reboot,
+  `console-ramoops-0` came back with `ECC: 873 unrecoverable blocks`, so
+  something between kernels (bootloader) scribbles on `0xffc00000`. Reading
+  the region from the ramdump *before* `edl-reset` is the reliable capture.
+
+### Instrumentation to diagnose it (prepared 2026-09-26, applied 2026-10-09 as kernel pkgrel 11)
+
+The reason the cause stays unidentified is that **nothing captures the moment**:
+`/sys/fs/pstore/` is empty because the RAM backend is off. In the vendored kernel
+config (`pkgbuilds/linux-moarchy-sm6350/config`) `CONFIG_PSTORE=y` but
+`CONFIG_PSTORE_RAM`, `_CONSOLE` and `_PMSG` are all **not set**, and neither the
+mainline `sm7225-fairphone-fp4.dts` nor `sm6350.dtsi` reserves a ramoops region.
+Enabling ramoops would let the *next* EDL episode leave the previous boot's
+console/panic tail in `/sys/fs/pstore/`.
+
+Two ready ways to enable it (both need a kernel rebuild):
+
+1. **Config + DT node (cleaner):** set `CONFIG_PSTORE_RAM=y`, `_CONSOLE=y`,
+   `_PMSG=y` (this `select`s `REED_SOLOMON*` via olddefconfig -- re-vendor the
+   resolved config to keep `prepare()`'s diff clean), and add a ramoops
+   reserved-memory node to the fp4 dts. **The address matters: `0xb0000000` is
+   NOT usable (see the hardware test below), despite showing as System RAM in
+   `/proc/iomem`.**
+2. **Config + cmdline (no DT, fits the no-kernel-patch stance):** the same config
+   change, plus `memmap=0x100000$<addr> ramoops.mem_address=<addr>
+   ramoops.mem_size=0x100000 ramoops.console_size=0x40000 ramoops.pmsg_size=0x40000
+   ramoops.record_size=0x20000` on the cmdline (image/boot/android-bootimg.sh).
+
+**Tested on hardware 2026-09-30 (INCONCLUSIVE -- boot did not come up, cause not
+yet isolated).** Built the shipped commit `16337c9dd` with
+`PSTORE_RAM/_CONSOLE/_PMSG=y` (`kernelrelease` matches shipped, so on-disk modules
+load) plus a `ramoops@b0000000` DT node (1 MiB, no `no-map`), assembled a
+transient `boot.img` (`~/Personal/linux-ramoops-d11/`), and `fastboot boot`ed it
+twice. Neither came up: the first boot hung, the retry dropped into EDL ramdump
+(`05c6:900e`, recovered with `scripts/edl-reset.py`).
+
+**Do not over-read this.** Two *different* failure modes from one image (hang,
+then ramdump) is the signature of the known flaky transient boot (D26 spends a
+slot retry), not of a deterministic memory fault. And the address is almost
+certainly fine: the FP4 **downstream** DT (`lagoon.dtsi` `reserved_memory`) marks
+every protected carveout as an explicit `no-map removed-dma-pool` (hyp, xbl,
+smem, all the pil_* firmware regions, `removed_region@c0000000`, the display
+regions up to `dfps_data@a2300000+0x100000`), and **nothing reserves
+`0xb0000000`** -- it is plain HLOS System RAM in both the downstream map and
+mainline `/proc/iomem`. So the 2026-09-26 "verified free" note still looks right;
+the ramoops node did not obviously crash anything.
+
+**Next (isolation, not a new address):** re-boot the SAME kernel with the ramoops
+node REMOVED. If it comes up cleanly, the two failures were flaky transient boots
+and `0xb0000000` is usable (just retry the ramoops boot until it takes). If it
+also fails, the fault is the `PSTORE_RAM` build or the transient method, not the
+address. The build and the transient-boot workflow are otherwise proven.
+
+**Why it is documented and not applied:** the config change requires a kernel
+rebuild this environment can't verify (a bad config fails the build), the DT node
+hits the same kernel-delivery wall as D23 (the kernel package is upstream-tag +
+config-only, no patch step), and the cmdline variant shares D10's unverified
+ABL-passthrough risk. So this is teed up for a build + verify, gated on the
+kernel-delivery decision below.
+
+**Honest limit of ramoops here:** it captures the *kernel* side -- a panic/oops
+or the previous boot's console tail. It will catch an EDL that follows a kernel
+crash or dirty shutdown. But "plain EDL, never a ramdump" points at the
+bootloader (XBL/ABL) choosing EDL *before* the kernel, which ramoops cannot see;
+a full diagnosis may also need the **PMIC PON/POFF warm-boot-reason register**
+surfaced (a separate, complementary lead). Ship ramoops as the cheap first
+instrument and read `/sys/fs/pstore/` after the next episode.
+
+### Recovering without touching the phone
+
+The documented recovery was a power-button hold, which is no use when the
+handset is not in the room -- and this happened at 01:00 with nobody near it.
+It is not necessary.
+
+EDL speaks Qualcomm's Sahara protocol, and Sahara has a reset command that the
+device honours *before* any authentication, with no signed programmer
+uploaded and nothing flashed. Two 32-bit words out, an acknowledgement back,
+and the phone reboots normally:
+
+```
+$ scripts/edl-reset.py
+edl-reset: reset acknowledged, the phone is rebooting
+```
+
+The device replies `08000000 08000000` -- `SAHARA_RESET_RESPONSE`, length 8 --
+and comes back on the network about two minutes later. Verified on hardware
+2026-09-23 on a handset that had dropped into EDL after an ordinary reboot.
+
+Worth being precise about what this does and does not do: it recovers the
+*symptom*. Why the phone enters EDL at all is still unknown, and the A/B retry
+hypothesis above is still the thing to test. But an EDL episode is no longer a
+dead end that needs somebody in the room, which changes how safe it is to
+reboot this phone unattended.
+
+### Recovery
+
+1. Hold **Power for ~15-20 seconds** until the phone goes dark.
+2. **Unplug the cable**, hold **Volume Down**, and plug it back in — this is
+   the order that works; holding Volume Down with the cable already attached
+   does not.
+3. In fastboot: `fastboot --set-active=b`, then `fastboot reboot`.
+
+Nothing is written in EDL unless something deliberately flashes it, and both
+occurrences recovered with the device intact.
+
+### What to do about it
+
+Until this is understood, **minimise reboots**, and check `qbootctl` after
+each one. If the mark-successful path is indeed broken, the fix is either to
+put `androidboot.slot_suffix` in the cmdline `android-bootimg.sh` builds, or
+to make the unit pass the slot explicitly.
+
+---
