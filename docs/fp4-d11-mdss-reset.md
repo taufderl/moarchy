@@ -163,10 +163,11 @@ running; it just must not be asserted under a live scanout.
 
 ## Fix
 
-Status: **v4 FIXES IT in testing (30/30 boots, 2026-10-10); not yet upstream or
-in the package.** The phone runs the v4 test kernel (`boot-fix4.img`, a local
-build with progress logging). The clean upstream patch, same logic without the
-logging, is [`patches/d11-mdss-quiesce.patch`](./patches/d11-mdss-quiesce.patch)
+Status: **FIXED in testing (v4 30/30, v5 20/20 boots, 2026-10-10); not yet
+upstream or in the package.** The phone runs the v5 test kernel
+(`boot-fix5.img`, a local build with progress logging). The clean upstream
+patch, the v5 logic without the logging (INTF stop + clock gating, 121 lines
+added), is [`patches/d11-mdss-quiesce.patch`](./patches/d11-mdss-quiesce.patch)
 (`checkpatch --strict` clean, DCO, no AI attribution); it has been compiled but
 not itself booted. Kernel branch
 `d11-mdss-quiesce` in the worktree `~/Personal/linux-d11-fix` (commit
@@ -223,6 +224,7 @@ image.
 | v3 | v2 + disable the DSI host (`DSI_CTRL` was `0x1f7`, video mode) + a log line per reset step | normal | 2 (stopped) | 1 | **at `reset_control_assert()`**: `reset asserting` logged, `reset asserted` never |
 | v3, no `resets` | v3 quiesce, reset property deleted | normal | 1 (transient) | 0 | -- but panel dead again: `sending DCS SET_DISPLAY_OFF failed: -110` |
 | v4 | v3 + gate the MDP core and AXI clocks before asserting (AHB is `CLK_IS_CRITICAL`) | normal | 30 | **0** | -- display up and quiesce `idle` on all 30 |
+| v5 | v4 **without** the DSI host disable (INTF stop + clock gating only) | normal | 20 | **0** | -- display up and quiesce `idle` on all 20 |
 
 **v2 is not a fix.** With the scanout verifiably stopped (frame counter frozen,
 `idle`), the reset still froze the SoC twice. So "a live scanout" is at most
@@ -239,9 +241,9 @@ v4 tests the last cheap lever: the clock state at the moment of assert.
 error on every boot. Against the unmodified kernel's 7 in 44 (16 %), 30 clean
 in a row is ~0.5 % likely by chance; against v2's 2 in 25 it is ~8 %, so v4 is
 clearly better than the baseline and very likely better than v2. More boots in
-daily use will tighten that. Which of v4's two additions over v2 matters (the
-DSI host disable or the clock gating) is not separated; v3 had the DSI disable
-without the gating and still hung on the assert, which points at the gating.
+daily use will tighten that. v5 then dropped the DSI host disable and still ran **20 of 20
+clean**: the clock gating is what matters (v3 had the DSI disable without the
+gating and still hung on the assert). The upstream patch is the v5 logic.
 
 Ruled out on the way: a wrong reset index. SM6350 maps `DISP_CC_MDSS_CORE_BCR`
 to `0x1000`, directly before the MDSS GDSC at `0x1004` (the usual BCR/GDSCR

@@ -19,7 +19,7 @@ configuring. `WONTFIX` — understood and deliberately left.
 | id | what | status |
 | --- | --- | --- |
 | [D8](#d8) | GPS runs but never reaches a fix; no A-GPS assistance | **OPEN** |
-| [D11](#d11) | The phone drops into EDL after repeated reboots: the MDSS core reset hangs the SoC when it meets the bootloader's running display. Fix (quiesce + gate clocks before the reset) passes 30/30 boots; not yet upstream or packaged | **FIX FOUND -- verifying** |
+| [D11](#d11) | The phone drops into EDL after repeated reboots: the MDSS core reset hangs the SoC when it meets the bootloader's running display. Fix (stop the scanout + gate clocks before the reset) passes 30/30 and 20/20 boots; not yet upstream or packaged | **FIX FOUND -- verifying** |
 | [D19](#d19) | The fingerprint reader is an Egis part with no Linux path | **UNSUPPORTED** |
 | [D21](#d21) | Bluetooth carries music but not call audio | **OPEN** |
 | [D22](#d22) | The touchscreen controller logs recurring i2c failures | **OPEN** |
@@ -408,9 +408,9 @@ Three ramdumps in about 13 reboots in one session, all from a plain
   `DRM_MSM=y` on 7.2. The phone is back on the stable boot.img (reset in place),
   so D11 still occurs on it at the old rate.
 
-**Status: FIX FOUND -- verifying.** v4 of the fix (stop the CTL-active INTF,
-disable the DSI host, gate the MDP/AXI clocks, then reset) ran 30 of 30 boots
-clean; see [`fp4-d11-mdss-reset.md`](./fp4-d11-mdss-reset.md#fix).
+**Status: FIX FOUND -- verifying.** The fix (stop the CTL-active INTF, gate
+the MDP/AXI clocks, then reset) ran 20 of 20 boots clean, and a variant that
+also disabled the DSI host 30 of 30; see [`fp4-d11-mdss-reset.md`](./fp4-d11-mdss-reset.md#fix).
 - **Warm-reboot pstore is unreliable here:** after a *clean* reboot,
   `console-ramoops-0` came back with `ECC: 873 unrecoverable blocks`, so
   something between kernels (bootloader) scribbles on `0xffc00000`. Reading
