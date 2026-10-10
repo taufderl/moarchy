@@ -1,32 +1,45 @@
-From 6731a7976de98e4ecc1c2d709a7568c3e397125f Mon Sep 17 00:00:00 2001
+From 11c8be0b2a9a834c511ad9d3b239462851b90346 Mon Sep 17 00:00:00 2001
 From: Tim auf der Landwehr <tadl-git@taufderl.de>
-Date: Sat, 10 Oct 2026 00:18:59 +0200
-Subject: [PATCH] drm/msm/mdss: stop the bootloader's scanout before resetting
- MDSS
+Date: Sat, 10 Oct 2026 15:09:21 +0200
+Subject: [PATCH] drm/msm/mdss: quiesce the bootloader's display before
+ resetting MDSS
 
-A bootloader that shows a splash leaves a video-mode interface scanning
-out of DDR when Linux probes the MDSS. msm_mdss_init() then asserts the
-MDSS core reset with that fetch still running. On the Fairphone 4
-(SM7225) this hangs the whole SoC on roughly one boot in four: nothing is
-logged after "really_probe: probing driver msm-mdss", and the watchdog
-eventually drops the phone into the Qualcomm ramdump. Removing the reset
-avoids the hang (20 of 20 boots) but leaves the panel dead, so the reset
-itself is needed.
+A bootloader that shows a splash leaves the MDSS running when Linux
+probes it: a video-mode INTF scanning out of DDR and the DSI host still
+enabled. msm_mdss_init() then asserts the MDSS core reset in that state.
+On the Fairphone 4 (SM7225) this hangs the whole SoC on roughly one boot
+in six: the write that asserts DISP_CC_MDSS_CORE_BCR never returns,
+nothing more is logged, and the watchdog drops the phone into the
+Qualcomm ramdump. The reset itself is needed: without it the panel never
+comes up (DSI command DMA times out).
 
-Before the reset, turn on the MDSS clocks, disable every INTF timing
-engine the bootloader left enabled and wait for the disable to latch at a
-frame boundary, the same wait the video encoder's own disable path does.
-The reset then lands on an idle MDP.
+Stopping the scanout alone is not enough; the assert still hung with the
+INTF verifiably idle. What made it reliable is a full teardown before the
+reset:
+
+ - enable the MDSS clocks so the DPU and DSI registers are reachable,
+ - disable every INTF timing engine that a CTL reports active, and wait
+   for the disable to latch at a frame boundary,
+ - disable the DSI host, which keeps running after its INTF stopped,
+ - gate the MDP core and AXI clocks again, so nothing can be in flight
+   when the reset is asserted.
+
+Only interfaces that a CTL reports active are touched: an active
+interface is clocked, an unused one may not be safe to access. That
+needs the active-CTL register, so the DPU part is limited to DPU 5.0+.
+
+Tested on the Fairphone 4: 30 of 30 boots clean with this change, where
+the unmodified kernel crashed on 7 of 44 boots.
 
 Signed-off-by: Tim auf der Landwehr <tadl-git@taufderl.de>
 ---
- drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c | 77 +++++++++++++++++++++++++
- drivers/gpu/drm/msm/msm_kms.h           |  6 ++
- drivers/gpu/drm/msm/msm_mdss.c          | 19 ++++--
- 3 files changed, 98 insertions(+), 4 deletions(-)
+ drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c | 100 ++++++++++++++++++++++++
+ drivers/gpu/drm/msm/msm_kms.h           |   6 ++
+ drivers/gpu/drm/msm/msm_mdss.c          |  52 +++++++++++-
+ 3 files changed, 154 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
-index da3556eb6ecc..ecc896e83671 100644
+index da3556eb6ecc..a50f8b9aa4d8 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
 @@ -11,6 +11,7 @@
@@ -37,13 +50,14 @@ index da3556eb6ecc..ecc896e83671 100644
  #include <linux/of_irq.h>
  #include <linux/pm_opp.h>
  
-@@ -1518,6 +1519,82 @@ static const struct of_device_id dpu_dt_match[] = {
+@@ -1518,6 +1519,105 @@ static const struct of_device_id dpu_dt_match[] = {
  };
  MODULE_DEVICE_TABLE(of, dpu_dt_match);
  
-+/* Offsets inside an INTF block, as in dpu_hw_intf.c */
++/* Register offsets, as in dpu_hw_intf.c and dpu_hw_ctl.c */
 +#define DPU_INTF_TIMING_ENGINE_EN	0x000
 +#define DPU_INTF_FRAME_COUNT		0x0ac
++#define DPU_CTL_INTF_ACTIVE		0x0f4
 +
 +/**
 + * dpu_quiesce_bootloader_scanout() - stop timing engines left on by firmware
@@ -52,19 +66,23 @@ index da3556eb6ecc..ecc896e83671 100644
 + * A bootloader showing a splash leaves a video-mode interface scanning out a
 + * framebuffer, so the MDP keeps fetching from DDR. Asserting the MDSS core
 + * reset while such a fetch is in flight can wedge the interconnect and hang
-+ * the whole SoC. Disable every running timing engine first and wait for the
++ * the whole SoC. Disable the running timing engines first and wait for the
 + * disable to latch at a frame boundary (as the video encoder's own disable
 + * path does), so the reset lands on an idle MDP.
 + *
++ * Only interfaces a CTL reports active are touched: an active interface is
++ * clocked, while an unused one (e.g. DP with its link clocks off) may not be
++ * safe to access at all. That needs the active-CTL register, DPU 5.0+.
++ *
 + * The caller must have the MDSS clocks enabled.
 + */
-+void dpu_quiesce_bootloader_scanout(struct device *mdss_dev)
++bool dpu_quiesce_bootloader_scanout(struct device *mdss_dev)
 +{
 +	const struct of_device_id *match = NULL;
 +	const struct dpu_mdss_cfg *cfg;
 +	struct device_node *np;
 +	void __iomem *mmio;
-+	u32 fc_before[INTF_MAX] = {};
++	u32 active = 0, fc_before[INTF_MAX] = {};
 +	bool running[INTF_MAX] = {};
 +	bool stopped = false;
 +	int i, idx;
@@ -75,53 +93,71 @@ index da3556eb6ecc..ecc896e83671 100644
 +			break;
 +	}
 +	if (!match)
-+		return;
++		return false;
 +
 +	cfg = match->data;
++	if (cfg->mdss_ver->core_major_ver < 5) {
++		of_node_put(np);
++		return false;
++	}
++
 +	idx = of_property_match_string(np, "reg-names", "mdp");
 +	mmio = of_iomap(np, idx < 0 ? 0 : idx);
 +	of_node_put(np);
 +	if (!mmio)
-+		return;
++		return false;
 +
-+	for (i = 0; i < cfg->intf_count && i < INTF_MAX; i++) {
-+		void __iomem *intf = mmio + cfg->intf[i].base;
++	for (i = 0; i < cfg->ctl_count; i++)
++		active |= readl_relaxed(mmio + cfg->ctl[i].base + DPU_CTL_INTF_ACTIVE);
 +
++	for (i = 0; i < cfg->intf_count; i++) {
++		const struct dpu_intf_cfg *ic = &cfg->intf[i];
++		void __iomem *intf = mmio + ic->base;
++		int n = ic->id - INTF_0;
++
++		if (n < 0 || n >= INTF_MAX || !(active & BIT(n)))
++			continue;
 +		if (!(readl_relaxed(intf + DPU_INTF_TIMING_ENGINE_EN) & BIT(0)))
 +			continue;
-+		running[i] = true;
-+		fc_before[i] = readl_relaxed(intf + DPU_INTF_FRAME_COUNT);
++		running[n] = true;
++		fc_before[n] = readl_relaxed(intf + DPU_INTF_FRAME_COUNT);
 +		writel_relaxed(0, intf + DPU_INTF_TIMING_ENGINE_EN);
 +		stopped = true;
 +	}
 +
 +	if (stopped) {
-+		/* Two frames at 30 Hz: the disable latches at the next vsync */
++		/*
++		 * Post the disables before waiting; two frames at 30 Hz, as the
++		 * disable latches at the next vsync.
++		 */
 +		wmb();
 +		msleep(70);
-+		for (i = 0; i < cfg->intf_count && i < INTF_MAX; i++) {
-+			void __iomem *intf = mmio + cfg->intf[i].base;
++		for (i = 0; i < cfg->intf_count; i++) {
++			const struct dpu_intf_cfg *ic = &cfg->intf[i];
++			void __iomem *intf = mmio + ic->base;
++			int n = ic->id - INTF_0;
 +			u32 fc1, fc2;
 +
-+			if (!running[i])
++			if (n < 0 || n >= INTF_MAX || !running[n])
 +				continue;
 +			fc1 = readl_relaxed(intf + DPU_INTF_FRAME_COUNT);
 +			msleep(20);
 +			fc2 = readl_relaxed(intf + DPU_INTF_FRAME_COUNT);
-+			dev_info(mdss_dev, "stopped bootloader scanout on %s (frame count %u -> %u, %s)\n",
-+				 cfg->intf[i].name, fc_before[i], fc2,
-+				 fc1 == fc2 ? "idle" : "STILL RUNNING");
++			dev_dbg(mdss_dev, "stopped bootloader scanout on %s (frame count %u -> %u, %s)\n",
++				ic->name, fc_before[n], fc2,
++				fc1 == fc2 ? "idle" : "STILL RUNNING");
 +		}
 +	}
 +
 +	iounmap(mmio);
++	return stopped;
 +}
 +
  static struct platform_driver dpu_driver = {
  	.probe = dpu_dev_probe,
  	.remove = dpu_dev_remove,
 diff --git a/drivers/gpu/drm/msm/msm_kms.h b/drivers/gpu/drm/msm/msm_kms.h
-index f25b31e502d2..abd41a2d22ee 100644
+index f25b31e502d2..85a08b4e136e 100644
 --- a/drivers/gpu/drm/msm/msm_kms.h
 +++ b/drivers/gpu/drm/msm/msm_kms.h
 @@ -240,4 +240,10 @@ static inline void msm_drm_kms_uninit(struct device *dev)
@@ -129,17 +165,61 @@ index f25b31e502d2..abd41a2d22ee 100644
  #endif
  
 +#ifdef CONFIG_DRM_MSM_DPU
-+void dpu_quiesce_bootloader_scanout(struct device *mdss_dev);
++bool dpu_quiesce_bootloader_scanout(struct device *mdss_dev);
 +#else
-+static inline void dpu_quiesce_bootloader_scanout(struct device *mdss_dev) {}
++static inline bool dpu_quiesce_bootloader_scanout(struct device *mdss_dev) { return false; }
 +#endif
 +
  #endif /* __MSM_KMS_H__ */
 diff --git a/drivers/gpu/drm/msm/msm_mdss.c b/drivers/gpu/drm/msm/msm_mdss.c
-index 9087c4b290db..818bdcc02474 100644
+index 9087c4b290db..d02234f7d6a9 100644
 --- a/drivers/gpu/drm/msm/msm_mdss.c
 +++ b/drivers/gpu/drm/msm/msm_mdss.c
-@@ -369,10 +369,6 @@ static struct msm_mdss *msm_mdss_init(struct platform_device *pdev, bool is_mdp5
+@@ -11,6 +11,7 @@
+ #include <linux/irqchip.h>
+ #include <linux/irqdesc.h>
+ #include <linux/irqchip/chained_irq.h>
++#include <linux/of_address.h>
+ #include <linux/of_platform.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+@@ -306,6 +307,35 @@ static void msm_mdss_destroy(struct msm_mdss *msm_mdss)
+ 	irq_set_chained_handler_and_data(irq, NULL, NULL);
+ }
+ 
++/*
++ * A DSI host the bootloader left in video mode keeps running after the INTF
++ * that fed it stopped. Disable it too before the MDSS reset. Only called when
++ * a running INTF was found, so the DSI clocks are known to be on.
++ */
++static void msm_mdss_quiesce_dsi(struct device *dev)
++{
++	struct device_node *np;
++
++	for_each_available_child_of_node(dev->of_node, np) {
++		void __iomem *base;
++		u32 ctrl;
++
++		if (!of_device_is_compatible(np, "qcom,mdss-dsi-ctrl"))
++			continue;
++		base = of_iomap(np, 0);
++		if (!base)
++			continue;
++		ctrl = readl_relaxed(base + 4);	/* REG_DSI_CTRL, 6G shift */
++		if (ctrl & BIT(0)) {
++			writel_relaxed(0, base + 4);
++			/* the disable must reach the host before the delay */
++			wmb();
++			usleep_range(1000, 2000);
++		}
++		iounmap(base);
++	}
++}
++
+ static int msm_mdss_reset(struct device *dev)
+ {
+ 	struct reset_control *reset;
+@@ -369,10 +399,6 @@ static struct msm_mdss *msm_mdss_init(struct platform_device *pdev, bool is_mdp5
  	int ret;
  	int irq;
  
@@ -150,22 +230,25 @@ index 9087c4b290db..818bdcc02474 100644
  	msm_mdss = devm_kzalloc(&pdev->dev, sizeof(*msm_mdss), GFP_KERNEL);
  	if (!msm_mdss)
  		return ERR_PTR(-ENOMEM);
-@@ -408,6 +404,21 @@ static struct msm_mdss *msm_mdss_init(struct platform_device *pdev, bool is_mdp5
+@@ -408,6 +434,24 @@ static struct msm_mdss *msm_mdss_init(struct platform_device *pdev, bool is_mdp5
  	msm_mdss->num_clocks = ret;
  	msm_mdss->is_mdp5 = is_mdp5;
  
 +	/*
-+	 * Reset only once any scanout the bootloader left running is stopped:
-+	 * asserting the core reset under a live fetch can hang the SoC. The
-+	 * clocks must be on to reach the DPU registers.
++	 * The bootloader may leave the MDSS scanning out a splash. Asserting
++	 * the core reset in that state can hang the SoC, so first stop the
++	 * timing engines and the DSI host (clocks on, to reach the registers),
++	 * then gate the core and bus clocks so nothing is in flight, and only
++	 * then reset.
 +	 */
 +	ret = clk_bulk_prepare_enable(msm_mdss->num_clocks, msm_mdss->clocks);
 +	if (ret)
 +		return ERR_PTR(ret);
-+	if (!is_mdp5)
-+		dpu_quiesce_bootloader_scanout(&pdev->dev);
-+	ret = msm_mdss_reset(&pdev->dev);
++	if (!is_mdp5 && dpu_quiesce_bootloader_scanout(&pdev->dev))
++		msm_mdss_quiesce_dsi(&pdev->dev);
++	/* Gate the MDP core and AXI clocks: nothing can be in flight then */
 +	clk_bulk_disable_unprepare(msm_mdss->num_clocks, msm_mdss->clocks);
++	ret = msm_mdss_reset(&pdev->dev);
 +	if (ret)
 +		return ERR_PTR(ret);
 +
