@@ -227,6 +227,7 @@ image.
 | v5 | v4 **without** the DSI host disable (INTF stop + clock gating only) | normal | 20 | **0** | -- display up and quiesce `idle` on all 20 |
 | v6 | clock gating **only** (no INTF stop) | normal | 1 (stopped) | 1 | at `reset asserting`, like the baseline |
 | CI pkgrel 12 | the clean patch as `0008` in `linux-moarchy-sm6350`, built by GitHub (`fp4` @ `9e118c6`, run 38064727143), `boot.img` flashed unchanged | normal | 20 | **0** | -- display up on all 20 |
+| CI full image | the whole GitHub image (`boot.img` + `rootfs.simg`, `fp4` @ `9e118c6`) flashed with its own `flash.sh`; kernel 7.2.0-12, device pkg -10, moarchy -15 | normal | 10 | **0** | -- sound card (D31), display, Hyprland, nothing deferred on all 10 |
 
 **v2 is not a fix.** With the scanout verifiably stopped (frame counter frozen,
 `idle`), the reset still froze the SoC twice. So "a live scanout" is at most
