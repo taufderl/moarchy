@@ -19,7 +19,7 @@ configuring. `WONTFIX` — understood and deliberately left.
 | id | what | status |
 | --- | --- | --- |
 | [D8](#d8) | GPS runs but never reaches a fix; no A-GPS assistance | **OPEN** |
-| [D11](#d11) | The phone drops into EDL after repeated reboots: the MDSS core reset hangs the SoC when it meets the bootloader's running display. Fix (stop the scanout + gate clocks before the reset) passes 30/30 and 20/20 boots; not yet upstream or packaged | **FIX FOUND -- verifying** |
+| [D11](#d11) | The phone drops into EDL after repeated reboots: the MDSS core reset hangs the SoC when it meets the bootloader's running display. Fix (stop the scanout + gate clocks before the reset) passes 30/30 and 20/20 boots; packaged as kernel pkgrel 12, upstream draft PR #16 | **FIX PACKAGED -- verifying in daily use** |
 | [D19](#d19) | The fingerprint reader is an Egis part with no Linux path | **UNSUPPORTED** |
 | [D21](#d21) | Bluetooth carries music but not call audio | **OPEN** |
 | [D22](#d22) | The touchscreen controller logs recurring i2c failures | **OPEN** |

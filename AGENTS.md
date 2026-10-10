@@ -91,7 +91,8 @@ So a kernel or DTS change is **not** made permanent by patching the package. The
 supported path is: land it upstream in `sm6350-mainline/linux` (the tree the pin
 tracks), then bump `manifest.toml`'s `kernel-ref`/`kernel-commit`. Open kernel
 PRs: #11 (fp4 mic DTS), #12 (aw88264 amp), #14 (fp4 NFC, st-nci raw-NCI + fixes),
-#15 (camss CSI PHY supply names). ALSA UCM lives in a separate repo:
+#15 (camss CSI PHY supply names), #16 (D11: quiesce the splash before the
+MDSS reset; draft; carried as package patch 0008 until it lands). ALSA UCM lives in a separate repo:
 sm6350-mainline/alsa-ucm-conf#2 (fp4 mic + earpiece).
 
 ## Hardware testing (the FP4)

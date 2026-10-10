@@ -163,8 +163,10 @@ running; it just must not be asserted under a live scanout.
 
 ## Fix
 
-Status: **FIXED in testing (v4 30/30, v5 20/20 boots, 2026-10-10); not yet
-upstream or in the package.** The phone runs the v5 test kernel
+Status: **FIXED and packaged (kernel pkgrel 12, `fp4` @ `9e118c6`, verified on the
+CI image); upstream as draft PR
+[sm6350-mainline/linux#16](https://github.com/sm6350-mainline/linux/pull/16)
+(branch `taufderl/linux:fp4-d11-mdss-quiesce`).** Earlier: The phone runs the v5 test kernel
 (`boot-fix5.img`, a local build with progress logging). The clean upstream
 patch, the v5 logic without the logging (INTF stop + clock gating, 121 lines
 added), is [`patches/d11-mdss-quiesce.patch`](./patches/d11-mdss-quiesce.patch)
