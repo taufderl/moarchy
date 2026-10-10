@@ -215,13 +215,20 @@ image.
 | baseline | none | dyndbg | ~5 | 3 | MDSS probe, before `mapped mdss` |
 | v2 | stop CTL-active INTF timing engines, then reset | dyndbg | 20 | **0** | -- |
 | v2 | same | normal | 25 | **2** (8 %) | after `stopped ... idle` and `resetting`: inside the reset |
-| v3 | v2 + disable the DSI host (`DSI_CTRL` was `0x1f7`, video mode) + a log line per reset step | normal | (running) | | |
+| v3 | v2 + disable the DSI host (`DSI_CTRL` was `0x1f7`, video mode) + a log line per reset step | normal | 2 (stopped) | 1 | **at `reset_control_assert()`**: `reset asserting` logged, `reset asserted` never |
+| v3, no `resets` | v3 quiesce, reset property deleted | normal | 1 (transient) | 0 | -- but panel dead again: `sending DCS SET_DISPLAY_OFF failed: -110` |
+| v4 | v3 + gate the MDP core and AXI clocks before asserting (AHB is `CLK_IS_CRITICAL`) | normal | (running) | | |
 
 **v2 is not a fix.** With the scanout verifiably stopped (frame counter frozen,
 `idle`), the reset still froze the SoC twice. So "a live scanout" is at most
 part of the story. v3 adds the DSI host to the quiesce (it keeps running after
 the INTF stops) and logs `reset asserting / asserted / deasserting /
 deasserted`, so the next crash, if any, shows which step freezes.
+
+**v3 answered that: the SoC freezes on the BCR assert write itself**, with the
+INTF stopped and the DSI host disabled. And without the reset, even after v3's
+clean teardown, the DSI command path stays broken, so the reset is still needed.
+v4 tests the last cheap lever: the clock state at the moment of assert.
 
 Ruled out on the way: a wrong reset index. SM6350 maps `DISP_CC_MDSS_CORE_BCR`
 to `0x1000`, directly before the MDSS GDSC at `0x1004` (the usual BCR/GDSCR
