@@ -25,7 +25,6 @@ configuring. `WONTFIX` — understood and deliberately left.
 | [D23](#d23) | The camera's CSI PHY supplies are undescribed, and a clock sticks on | **OPEN** |
 | [D29](#d29) | s2idle aborts in ~2s: serial-console RX wakeup (irq 172). Fixed by mainline `d0cd9c8d0fd5` (qcom-geni force-suspend), VALIDATED on FP4 (holds 21s). udev rule is the stopgap until the kernel carries it. Deep-collapse depth cap is a separate open bug | **abort FIXED (mainline fix validated); depth open** |
 | [D30](#d30) | The quickshell before-sleep lock trapped a locked-password account. Quick fix: the image ships the default PIN `1337` (ssh password auth stays off) | **QUICK FIX APPLIED -- verify on next image** |
-| [D31](#d31) | Some boots have no sound card: the ADSP booted before the PD locator it queries (qcom_pd_mapper) was loaded. Fix applied (modprobe softdep), verifying over more boots | **FIX APPLIED -- verifying** |
 
 ---
 
@@ -521,159 +520,18 @@ it is not fixed by anything in this tree.
 
 ---
 
-## D28 — the phone never suspends on idle; it only blanks the screen {#d28}
-
-**Status: REOPENED 2026-10-01 as D29 (s2idle does not hold). The wiring below is
-correct; the deeper problem is that s2idle never stays asleep.** See [D29](#d29).
-
-**Status (2026-09-27): FIXED, s2idle drain measured (~1 %/h, ~7x better than
-screen-blank); pending only the pkgrel-13 reflash to put the same config on the
-phone.** The idle->suspend wiring
-(steps 1-2) was done 2026-09-26. Two follow-up overnight watches saw zero
-suspends, but the cause was NOT the idle logic -- it was that the swayidle under
-test had been relaunched over ssh and so had no logind seat, and polkit denies
-suspend to a seatless session (see "Root cause" below). The in-session swayidle
-is authorized and suspends. The idle action has also been consolidated into one
-step (moarchy-idle-action). This is Track A1 in
-[`fp4-roadmap.md`](./fp4-roadmap.md) and the reason battery is rated `P`: "screen
-off" is not "asleep", so the phone drains while it looks off.
-
-**What is already there** (checked on the handset, read-only):
-
-- s2idle is the supported mode: `/sys/power/state` = `freeze mem`,
-  `/sys/power/mem_sleep` = `[s2idle]` (there is no deep/S3 on this SoC in
-  mainline, which is normal).
-- Wake sources are enabled where it matters: the power-button PMIC pwrkey
-  (`pon@800:pwrkey`), all three remoteprocs including `remoteproc1: modem`
-  (so an incoming call/SMS can wake the AP), and the RTC alarm (`rtc@6100`).
-- The fuel gauge works: `qcom_qg` reports capacity and voltage
-  (99 %, 4.39 V). `current_now` reads 0 while on USB, so idle drain cannot be
-  measured until the phone is unplugged.
-- Nothing is holding a wakelock: no `/sys/kernel/debug/wakeup_sources` entry has
-  `prevent_suspend_time > 0`, so s2idle should be enterable.
-- `rtcwake` is installed (util-linux 2.42.3) with a working
-  `/sys/class/rtc/rtc0/wakealarm`.
-
-**The actual defect.** Nothing triggers a system suspend:
-
-- `logind` has `IdleAction=ignore` (the default), so it never suspends.
-- swayidle runs a single rule, `timeout 600 moarchy-idle-blank`, which blanks
-  the panel and stops there. The CPU, modem and buses stay fully powered with
-  the screen dark.
-
-So after ten minutes the display goes off and the phone keeps running at full
-idle power. That is the battery finding.
-
-**What remains, in order:**
-
-1. **Prove s2idle resumes cleanly. DONE 2026-09-26 — it works.** `rtcwake -m mem
-   -s 25` (armed detached via `systemd-run` so it did not depend on the ssh
-   session), with the owner watching. The phone suspended, woke on the RTC
-   alarm, and reconnected on its own; `/sys/power/suspend_stats/success` went
-   0 -> 1, fail 0, and dmesg shows a clean cycle:
-
-   ```
-   PM: suspend entry (s2idle)
-   Filesystems sync: 0.027 seconds
-   Restarting tasks: Starting / Done
-   PM: suspend exit
-   ```
-
-   No failed devices, entry->resume in ~2 s. So s2idle is safe to enable.
-2. **Wire idle -> suspend. DONE 2026-09-26, tested live on the FP4.** A second
-   swayidle timeout (config/hypr/autostart.lua) runs `bin/moarchy-idle-suspend`
-   60 s after the blank, with `before-sleep 'moarchy-lock'` so every suspend path
-   wakes to the PIN pad. moarchy-idle-suspend skips Stay Awake and an active
-   call/audio (sink/source streams, sleep inhibitors). Shipped by moarchy pkgrel 9.
-   Verified on hardware: `moarchy-idle-suspend` suspended to s2idle
-   (`suspend_success` incremented, clean resume), and a **single** power-button
-   press woke it to the PIN pad, which the PIN unlocked.
-
-   **Also fixed a double-press bug found during this test.** Idle-off used to run
-   `moarchy-screen blank`, which blanks WITHOUT setting the lock flag (so touch
-   could wake it). But the power button decides lock-vs-wake off that flag, so the
-   first press after idle read no flag and re-locked (a no-op blank) instead of
-   waking -- you needed two presses, unlike a power-button-off (one). Fix:
-   `moarchy-idle-blank` now runs `moarchy-screen lock`, so idle-off leaves the
-   same state as power-off and a single press wakes. Trade-off: touch no longer
-   wakes from idle (the power button does), which is standard phone behaviour and
-   is what removes the two-handler race. Verified: single press now wakes from
-   idle.
-3. **Measure idle drain** in s2idle vs screen-blank-only, which needs the phone
-   unplugged (USB masks `current_now`), same constraint as GPS testing.
-
-**Screen-blank-only drain measured 2026-09-26, unplugged overnight.** With the
-system never suspending (confirmed: `/sys/power/suspend_stats/success` = 0, no
-suspend lines in dmesg over ~46 h uptime), the battery went **99% -> 34%
-overnight** (4.39 V -> 3.72 V). Instantaneous draw ~**0.73 W** (upower), ~8 h to
-empty at 34% -- i.e. roughly **~1 day of standby from full**, screen off, doing
-nothing. That is the cost of D28: a phone that should get days of s2idle standby
-gets about one. The s2idle comparison number still needs step 1 (a proven
-resume) before it can be taken. (Aside: the fuel-gauge/charger status
-misreports here -- `qcom_qg` status reads Unknown and pm7250b-charger reads
-"Charging" while clearly discharging; cosmetic, but it breaks any status-based
-UI.)
-
-
-**Root cause of "zero overnight suspends" (corrected 2026-09-27): a polkit/seat
-problem in the test setup, not the idle logic.** Two overnight watches showed
-`/sys/power/suspend_stats/success` stuck at its starting value across the whole
-night. But the swayidle being watched had, in both cases, been relaunched over
-ssh during earlier live debugging -- and an ssh-launched process has no logind
-seat. logind/polkit grants `org.freedesktop.login1.suspend` to an **active,
-seated** session with no prompt, but requires admin authentication (`auth_admin`)
-for a seatless one, which on this locked-password phone can never be satisfied.
-So swayidle fired its timeout, ran the action, called `systemctl suspend`, and
-was silently denied. The swayidle stderr confirms it:
-
-```
-Call to Suspend failed: Access denied as the requested operation requires
-interactive authentication. However, interactive authentication has not been
-enabled by the calling program.
-```
-
-Proof it is the seat, not the code (checked 2026-09-27 with `pkcheck`):
-
-| caller | logind session | `pkcheck ... login1.suspend` |
-|---|---|---|
-| Hyprland (graphical) | c1, seat0, active | **rc=0 (authorized)** |
-| ssh shell | c197/c208, no seat | rc=2, `auth_admin_keep` (denied) |
-
-So the earlier "timer reset" hypothesis (that a 600 s blank reset swayidle's
-clock so a 660 s suspend timeout never fired) was wrong: swayidle does fire, and
-the graphical session is authorized. **The lesson: idle-suspend cannot be tested
-by relaunching swayidle over ssh.** A hand test must put swayidle in the
-graphical session -- e.g. `hyprctl dispatch 'hl.exec_cmd("swayidle ...")'`, which
-Hyprland runs as its own child on seat0 (`cgroup: session-c1`, `pkcheck rc=0`).
-
-**Code change kept regardless:** the idle action is consolidated into one
-`bin/moarchy-idle-action` (lock, then `moarchy-idle-suspend`) driven by a single
-swayidle timeout, replacing the two-timeout design -- one atomic action, no
-dependence on a second timeout. `config/hypr/autostart.lua`, moarchy pkgrel 13.
-This is a simplification, not a fix for a proven bug in note 9.
-
-**Valid test DONE, s2idle drain measured (2026-09-27, on battery, unplugged).**
-swayidle launched in-session via `hl.exec_cmd` (`cgroup: session-c1`,
-`pkcheck rc=0`), running `timeout 600 moarchy-idle-action ...`; guards all clear.
-It suspended once at ~04:16 (last awake 04:13 @ 62%) and held s2idle until the
-power-button wake at ~09:22 @ 57% -- `suspend_stats/success` 3 -> 4, fail 0.
-
-**Result: 62% -> 57% = 5% over ~5.1 h = ~1 %/h in s2idle**, vs the
-screen-blank-only ~7 %/h (~0.73 W) measured earlier -- about **7x** slower, i.e.
-roughly **4 days** of standby from full instead of ~1. It also re-suspended on
-its own after the morning wake (idle-suspend fires repeatedly, not just once).
-(Caveat: the fuel gauge misreads for a few minutes after resume -- a 57%->49%
-jump in 5 min awake is the qcom_qg `status=Unknown` re-settle, not real drain; the
-across-suspend delta is the reliable figure.) Step 3 is complete; D28 is fixed,
-pending only the same config reaching the phone via the pkgrel-13 reflash.
-
-**Note for the reflash:** the image built overnight (2026-09-27) carries the old
-two-stage config -- the change landed after that build started. Rebuild the image
-(moarchy is now pkgrel 13) before/with tomorrow's reflash. After reflash, the
-valid confirmation is simply: boot, leave the phone idle and unplugged, and watch
-`suspend_success` climb -- do NOT relaunch swayidle over ssh (it would be denied).
-
 ## D29 -- s2idle enters but does not stay asleep {#d29}
+
+**Where it stands (2026-10-11), for the next session:** the *abort* is fixed and
+shipping: kernel package patch `0007-d29-geni-force-suspend.patch` (the mainline
+qcom-geni force-suspend fix, `d0cd9c8d0fd5`) plus the udev stopgap
+`moarchy-device-fp4/82-fp4-serial-wakeup.rules`, both in the `fp4` @ `1e1944b`
+image. Neither is in the pinned `sm6350-mainline/linux` tree yet (task: flag the
+mainline fix to Luca so the pin can carry it, then drop both). **Open, and the
+reason the phone is not yet useful to carry:** the SoC never reaches deep sleep
+(`qcom_stats` `aosd`/`cxsd`/`ddr` counts stay 0, `cx` pinned at perf 256), so
+standby drains the battery. That is the next session's focus; the "Holder of
+`cx` NOT yet pinned" and "Ruled out" notes below are the starting point.
 
 **Status: OPEN (found 2026-10-01, on the flashed 0.5.0 public build).** The
 suspend path works but the SoC never stays in s2idle: it enters and exits in
@@ -971,88 +829,3 @@ lockout.
 
 ---
 
-## D31 -- some boots have no sound card: the ADSP's APR audio services never register {#d31}
-
-**Status: OPEN -- important (found 2026-10-08, on the mic-fix kernel `d7f57bf`
-flashed over the fp4-dev-all rootfs).** Intermittent: the boot straight after the
-flash had a working card and captured audio; a later cold boot came up with
-`/proc/asound/cards` = `--- no soundcards ---` and stayed that way.
-
-It looks like D10 but is not D10. `deferred_probe_timeout=60` is on the cmdline
-and the ADSP was **early**, not late:
-
-```
-[   16.569564] remoteproc remoteproc0: remote processor adsp is now up
-[   78.910054] platform 33c0000.pinctrl: deferred probe pending: (reason unknown)
-[   78.853687] platform 3370000.codec: deferred probe pending: va_macro: unable to get macro clock
-```
-
-The difference is one layer down. `apr`, `qrtr` and `qcom_pd_mapper` are loaded,
-but **no APR service device ever appears**, so `q6afe`, `q6afe_clocks`,
-`q6afe_dai` and `snd_q6dsp_common` are never autoloaded. Without q6afe-clocks the
-LPASS clocks do not exist, the LPI pinctrl (`33c0000.pinctrl`) cannot probe, and
-everything behind it (both macros, both SoundWire controllers, the sound card)
-stays deferred until the timeout gives up. Writing `33c0000.pinctrl` to
-`/sys/bus/platform/drivers_probe` afterwards does not bring it back, because the
-missing supplier is the q6 clock service, not the pinctrl itself.
-
-So on these boots the audio protection domain on the ADSP never announces its
-services, although the ADSP remoteproc reports `running`.
-
-**Candidate fix, untested:** upstream `b8e6fa9877f6` ("arm64: dts: qcom: sm6350:
-Add memory-region for audio PD", Luca Weiss, on `sm6350-7.2.y` after the
-`v7.2.0-sm6350` tag) reserves a remote heap for the ADSP's audio PD dynamic
-loading and adds the LPASS/ADSP-heap VMIDs for ownership transfer. The pinned tag
-lacks it. Bumping the kernel pin to the branch head picks it up; whether it cures
-this needs a multi-boot count, since the failure is intermittent.
-
-**2026-10-08, on the bumped kernel (sm6350-7.2.y @ 5ba18a1da713):**
-
-- **`b8e6fa9877f6` does not prevent it.** In a 5-boot loop on the kernel that
-  carries it, boots 1-3 had the card and all three q6 modules; boot 4 came up
-  with no card and the identical signature. (The loop stopped there because
-  that boot also never got an IPv4 lease; WiFi associated, only IPv6 came up.
-  Whether that is related is open -- WiFi's QMI services go over the same QRTR
-  bus as the audio PD's service registry.)
-- **The APR bus is empty on a bad boot:** `/sys/bus/apr/devices` lists
-  nothing, with `apr`, `qrtr` and `qcom_pd_mapper` loaded and the ADSP up at
-  ~15 s. So the audio PD's services are never announced, rather than announced
-  late.
-- **Restarting the ADSP recovers it without a reboot:**
-
-  ```
-  echo stop  | sudo tee /sys/class/remoteproc/remoteproc0/state
-  echo start | sudo tee /sys/class/remoteproc/remoteproc0/state
-  ```
-
-  Within 15 s `q6afe`, `q6afe_clocks`, `q6asm` and `q6adm` autoload, the
-  card registers and `devices_deferred` empties -- the stuck devices probe
-  even though the 60 s deferred-probe window has long expired. So this is a
-  boot-time race in the audio PD's first start, not a lasting fault, and it
-  points at a cheap mitigation (if no card ~90 s after boot, restart the ADSP
-  once; the sensor core shares the ADSP, so iio-sensor-proxy blips).
-
-**Root cause (2026-10-09): a module-load race, not the DSP.** On a DSP's
-start, remoteproc adds a "pd-mapper" auxiliary device, and the separately
-loaded `qcom_pd_mapper` module binds to it and starts the service-locator
-(servloc) QMI server that the ADSP firmware queries for its audio PD. The ADSP
-reaches that QMI service over the QRTR link that `qrtr_smd` provides. Nothing
-orders those modules against `qcom_q6v5_pas` (no softdep anywhere upstream);
-udev loads them on demand. Measured with the `module_load` tracepoint, armed
-before udev coldplug, on 6 boots: `qcom_pd_mapper` loaded **40-235 ms after**
-"adsp is now up" every time, and `qrtr_smd` after it too. The ADSP usually
-waits long enough; when it does not, its audio services never register (no
-APR devices, no `ssctl`) and there is no card.
-
-**Fix:** `softdep qcom_q6v5_pas pre: qrtr qrtr_smd qcom_pd_mapper`
-(moarchy-device-fp4, `/usr/lib/modprobe.d/moarchy-fp4-pd-mapper.conf`), so
-modprobe/udev load them before the remoteproc driver. Verified on hardware:
-across 10 reboots the order flipped to `qrtr_smd` and `qcom_pd_mapper` loading
-~150-250 ms **before** "powering up adsp", and all 10 boots had the sound card.
-No ADSP restart, so call audio is untouched. Before the fix D31 hit roughly
-one boot in 10-15, so 10 clean boots supports the fix but does not yet prove it;
-it moves to fp4-fixes.md after more boots in normal use.
-
-**Workaround:** reboot, or restart the ADSP as above. **Diagnose a bad boot:** `lsmod | grep -E 'q6afe|apr'`
-(apr present, q6afe absent = this defect) and
-`sudo cat /sys/kernel/debug/devices_deferred` (the 33c0000.pinctrl chain).
