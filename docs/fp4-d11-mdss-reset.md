@@ -226,6 +226,7 @@ image.
 | v4 | v3 + gate the MDP core and AXI clocks before asserting (AHB is `CLK_IS_CRITICAL`) | normal | 30 | **0** | -- display up and quiesce `idle` on all 30 |
 | v5 | v4 **without** the DSI host disable (INTF stop + clock gating only) | normal | 20 | **0** | -- display up and quiesce `idle` on all 20 |
 | v6 | clock gating **only** (no INTF stop) | normal | 1 (stopped) | 1 | at `reset asserting`, like the baseline |
+| CI pkgrel 12 | the clean patch as `0008` in `linux-moarchy-sm6350`, built by GitHub (`fp4` @ `9e118c6`, run 38064727143), `boot.img` flashed unchanged | normal | 20 | **0** | -- display up on all 20 |
 
 **v2 is not a fix.** With the scanout verifiably stopped (frame counter frozen,
 `idle`), the reset still froze the SoC twice. So "a live scanout" is at most
